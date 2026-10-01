@@ -1,0 +1,12 @@
+const {z} = require('zod');
+const schema = z.object({
+ setupComplete:z.boolean().default(false), mock:z.boolean().default(true),
+ ollamaUrl:z.string().url().refine(v=>{const u=new URL(v);return ['localhost','127.0.0.1','[::1]'].includes(u.hostname)&&u.protocol==='http:'},'Only a local Ollama server is allowed').default('http://127.0.0.1:11434'),
+ model:z.string().max(200).default(''), visionModel:z.string().max(200).default(''), temperature:z.number().min(0).max(2).default(.4), context:z.number().int().min(1024).max(131072).default(8192),
+ startup:z.boolean().default(false), tray:z.boolean().default(true), minimized:z.boolean().default(false), animations:z.enum(['full','reduced','off']).default('full'),
+ microphone:z.boolean().default(false), microphoneId:z.string().default(''), wakeWord:z.string().min(1).max(40).default('Jarvis'), wakeEnabled:z.boolean().default(false), ptt:z.string().default('CommandOrControl+Shift+Space'), sttModel:z.string().default('base'), pythonPath:z.string().default('python'), tts:z.boolean().default(true), speechSpeed:z.number().min(.5).max(2).default(1), speechVolume:z.number().min(0).max(1).default(.8),
+ vision:z.enum(['off','manual','awake','continuous']).default('manual'), monitor:z.string().default(''), interval:z.number().int().min(10).max(300).default(30), imageQuality:z.number().int().min(400).max(1920).default(1280), frameThreshold:z.number().min(0).max(1).default(.02),
+ mouse:z.boolean().default(false), keyboard:z.boolean().default(false), browser:z.boolean().default(true), filesystem:z.boolean().default(false), powershell:z.boolean().default(false),
+ conversationLogs:z.boolean().default(false), memory:z.boolean().default(true), fileRoot:z.string().default(''),
+}).strict();
+module.exports={schema,defaults:()=>schema.parse({})};
