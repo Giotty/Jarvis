@@ -122,6 +122,7 @@ export function Settings({ config, models, save, refresh }: Props) {
             {input('sttModelPath', 'Downloaded Whisper model folder')}
             {select('ttsEngine', 'Local speech engine', ['kokoro', 'piper', 'windows'])}
             {select('sttLanguage', 'Speech language', ['en', 'auto'])}
+            {select('sttDevice', 'Speech processing', ['auto', 'cuda', 'cpu'])}
             {toggle('autoStopSpeech', 'Finish recording when you stop speaking')}
             {draft.ttsEngine === 'kokoro' && (
               <>
@@ -140,6 +141,7 @@ export function Settings({ config, models, save, refresh }: Props) {
               'tiny',
               'base',
               'small',
+              'small.en',
               'medium',
               'large-v3',
               'distil-large-v3',
@@ -202,12 +204,18 @@ export function Settings({ config, models, save, refresh }: Props) {
             {toggle('keyboard', 'Allow keyboard control')}
             {toggle('browser', 'Allow app and browser launch')}
             {toggle('filesystem', 'Allow filesystem tools')}
-            {input('fileRoot', 'Allowed filesystem root')}
+            {select('fileAccess', 'File access scope', ['selected', 'computer'])}
+            {input(
+              'fileRoot',
+              draft.fileAccess === 'computer'
+                ? 'Default folder for relative paths'
+                : 'Allowed filesystem root',
+            )}
             <button onClick={() => void chooseRoot()}>CHOOSE FILE ROOT</button>
             {toggle(
               'powershell',
-              'Allow read-only PowerShell',
-              'Only Get-Date, Get-ComputerInfo and Get-PSDrive are allowlisted.',
+              'Allow PowerShell with confirmation',
+              'The exact script is shown for approval. Windows permissions and UAC still apply.',
             )}
           </>
         )}
@@ -237,13 +245,14 @@ export function Settings({ config, models, save, refresh }: Props) {
                 and form submission.
               </p>
               <p>
-                <b>03 / CRITICAL</b> Explicit approval for deletion and restricted PowerShell.
+                <b>03 / CRITICAL</b> Explicit approval for deletion, overwrites, executable paths
+                and PowerShell commands.
               </p>
             </div>
             <p className="help">
               The model cannot disable safety. Approvals expire after 60 seconds and apply to one
-              action. Permanent deletion, elevated commands, registry edits, installers and
-              arbitrary executable launch are blocked.
+              action. Destructive actions, installers and PowerShell changes require approval.
+              Windows permissions still apply, and elevation needs Windows UAC.
             </p>
             <p className="danger-text">
               EMERGENCY STOP: CTRL + SHIFT + ESCAPE

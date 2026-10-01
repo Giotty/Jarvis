@@ -128,10 +128,12 @@ test('capture ignores silence, emits a turn after a brief pause, then detects in
   }
   for (let i = 0; i < 14; i++) utterance = capture.push(silence, true).final || utterance;
   assert.equal(onsets, 1);
-  assert.equal(previews, 1);
+  assert.equal(previews, 0); // Short turns no longer incur a second transcription.
   assert.ok(utterance.length > 30);
   for (let i = 0; i < 6; i++) onsets += Number(capture.push(speech, true).onset);
   assert.equal(onsets, 2);
+  for (let i = 0; i < 80; i++) previews += Number(!!capture.push(speech, true).preview);
+  assert.equal(previews, 1); // Long spoken requests can still start navigation early.
 });
 
 test('speech buffers encode real mono PCM WAV with the actual capture rate', () => {

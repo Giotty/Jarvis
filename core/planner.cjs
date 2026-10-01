@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const { validate, toolSchemas } = require('./tools.cjs');
-const { directIntent, earlyIntent } = require('./intents.cjs');
+const { directIntent, earlyIntent, conversationOnly } = require('./intents.cjs');
 class Planner {
   constructor({
     ollama,
@@ -81,6 +81,12 @@ class Planner {
         ...this.history,
         { role: 'user', content: text },
       ];
+      this.messages[0].content +=
+        ' Actual access: installed applications can be discovered and launched by name, not just the seven legacy shortcuts. Windows Settings pages and accessible UI controls are available. File access scope is ' +
+        (this.config().fileAccess === 'computer'
+          ? 'all local drives under this Windows account'
+          : 'the selected file root') +
+        '. Use list_directory/read_file/search_files for actual files. Use write_file/move_file/delete_file or run_powershell for requested changes; these require confirmation. PowerShell is not limited to three commands, but every script needs approval, and Windows UAC is still required for elevation. Do not claim access is unlimited or that Windows protection can be bypassed. If a request needs a missing capability or access is denied, explain the specific limitation.';
       this.history.push({ role: 'user', content: text });
       // Exact app-launch requests use the same validated executor and safety policy,
       // but do not need to wait for a model or ask it to guess an application.
@@ -109,6 +115,8 @@ class Planner {
       if (!intent && this.context.awaitingGame && text.trim().length <= 200)
         this.directAction = { tool: 'play_roblox_game', args: { query: text.trim() } };
       this.context.awaitingGame = false;
+      const responseOnly = !this.directAction && conversationOnly(text);
+      if (responseOnly) this.emit('speech-start', true);
       const reply = this.directAction
         ? {
             role: 'assistant',
@@ -119,15 +127,20 @@ class Planner {
           }
         : await this.ollama.chat(
             this.messages,
-            toolSchemas(),
+            responseOnly ? undefined : toolSchemas(),
             false,
             this.controller.signal,
             (chunk) => {
-              if (!this.cancelled) this.emit('reply-chunk', chunk);
+              if (!this.cancelled) {
+                this.emit('reply-chunk', chunk);
+                if (responseOnly) this.emit('speech-chunk', chunk);
+              }
             },
           );
       if (this.cancelled) return;
       const calls = reply.tool_calls || [];
+      if (responseOnly && calls.length)
+        throw Error('Conversation-only responses cannot execute tools.');
       if (!calls.length) {
         this.finish(reply.content || 'No response from model.');
         return;
@@ -223,7 +236,7 @@ class Planner {
     this.emit('state', 'EXECUTING');
     this.save();
     try {
-      const result = await this.executor.execute(step);
+      const result = await this.executor.execute(step, this.controller?.signal);
       if (this.cancelled) return false;
       step.result = result;
       if (result.games) this.context.games = result.games;
@@ -252,6 +265,7 @@ class Planner {
     }
   }
   fail(error) {
+    this.emit('speech-abort', true);
     if (this.active && this.active.status === 'running') {
       this.active.status = 'failed';
       this.save();

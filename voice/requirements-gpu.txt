@@ -1,0 +1,4 @@
+# Optional NVIDIA acceleration on Windows. No CUDA toolkit/compiler is needed.
+nvidia-cudnn-cu12==9.27.0.42
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cuda-nvrtc-cu12==12.9.86

@@ -8,8 +8,11 @@ class SpeechWorker {
     this.buffer = '';
     this.executable = '';
     this.prepared = null;
+    this.epoch = 0;
+    this.queue = Promise.resolve();
   }
   stop() {
+    this.epoch++;
     if (this.child) {
       const child = this.child;
       if (process.platform === 'win32' && child.pid && child.exitCode === null)
@@ -79,7 +82,12 @@ class SpeechWorker {
   }
   settings() {
     const c = this.config();
-    return { model: c.sttModel, modelPath: c.sttModelPath, language: c.sttLanguage };
+    return {
+      model: c.sttModel,
+      modelPath: c.sttModelPath,
+      language: c.sttLanguage,
+      device: c.sttDevice,
+    };
   }
   prepare(payload = this.settings()) {
     if (!this.prepared) this.prepared = this.request({ ...payload, operation: 'prepare' });
@@ -90,8 +98,20 @@ class SpeechWorker {
     return this.request({ audio, ...this.settings() });
   }
   async synthesize(text, payload) {
-    if (this.prepared) await this.prepared;
-    return this.request({ text, ...payload });
+    // Barge-in discards playback, not this warmed model. Serialize requests
+    // so a new reply can safely follow synthesis that was already in progress.
+    if (!this.child) this.start();
+    const epoch = this.epoch;
+    const result = this.queue
+      .catch(() => {})
+      .then(async () => {
+        if (epoch !== this.epoch) throw Error('Speech request cancelled.');
+        await this.prepare(payload);
+        if (epoch !== this.epoch) throw Error('Speech request cancelled.');
+        return this.request({ text, ...payload });
+      });
+    this.queue = result.catch(() => {});
+    return result;
   }
 }
 module.exports = { SpeechWorker };

@@ -79,7 +79,39 @@ function directIntent(input, context = {}) {
       name: aliases[match[1].toLowerCase()] || match[1].toLowerCase(),
     });
   }
+  match = text.match(
+    /^(?:open|show|go to)\s+(?:windows\s+)?settings(?:\s+(?:for|to|on)\s+(.+))?$/i,
+  );
+  if (match) return action('open_settings', { page: match[1] || '' });
+  match = text.match(/^(?:open|show)\s+(?:the\s+)?(?:windows\s+)?(.+?)\s+settings$/i);
+  if (match) return action('open_settings', { page: match[1] });
+  match = text.match(
+    /^(?:open|show)\s+(?:my\s+)?(downloads|documents|desktop|pictures|videos|music)(?:\s+folder)?$/i,
+  );
+  if (match) return action('open_file', { path: match[1] });
+  match = text.match(/^(?:open|launch)\s+["']?([a-z]:[\\/].+?)["']?$/i);
+  if (match)
+    return action(
+      /\.(exe|msi|msix|bat|cmd|ps1|vbs|js|lnk|scr|com)$/i.test(match[1])
+        ? 'launch_executable'
+        : 'open_file',
+      { path: match[1] },
+    );
+  match = text.match(/^(?:open|launch|start)\s+(?:the\s+)?(.+?)(?:\s+app)?$/i);
+  if (match && !/\b(?:file|folder|game|called|named|in|on|with|and|search)\b/i.test(match[1]))
+    return action('open_application', { name: match[1] });
   return null;
+}
+function conversationOnly(text) {
+  if (
+    /\b(?:screen|window|file|folder|computer|installed|clipboard|settings|system|apps?|application|drives?|volume|open|launch|search|find|browse|click|type|scroll|delete|move|save|run|execute|shutdown|restart|install|uninstall|registry|weather|news|time|date|roblox|youtube|remember)\b/i.test(
+      text,
+    )
+  )
+    return false;
+  return /^(?:(?:hey\s+)?jarvis[, :]+)?(?:hello|hi|hey|good (?:morning|evening)|how are you|what|why|who|when|how|explain|tell me|thank|thanks|let['’]s talk)\b/i.test(
+    text.trim(),
+  );
 }
 function earlyIntent(text) {
   // Partial transcripts may change. Only reversible, named navigation starts
@@ -94,4 +126,4 @@ function earlyIntent(text) {
     );
   return match ? directIntent('open ' + match[1]) : null;
 }
-module.exports = { directIntent, earlyIntent };
+module.exports = { directIntent, earlyIntent, conversationOnly };

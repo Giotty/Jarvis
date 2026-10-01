@@ -26,6 +26,8 @@ for line in sys.stdin:
                 raise RuntimeError('Unsupported local speech engine.')
             engine_key = key
         if request.get('operation') == 'prepare':
+            if kind == 'kokoro':
+                engine.create('Ready, sir.', voice=request['voice'], lang='en-gb')
             result = {'ready': True}
         else:
             text = re.sub(r'\[([^]]+)\]\([^)]+\)', r'\1', request['text'])

@@ -24,7 +24,12 @@ test('fixed risks cannot be downgraded by model parameters', () => {
   assert.equal(validate({ tool: 'delete_file', args: { path: 'x' } }).risk, 3);
   assert.equal(validate({ tool: 'click_mouse', args: { x: 10, y: 10 } }).risk, 2);
   assert.throws(() => validate({ tool: 'type_text', args: { text: 'abc', risk: 0 } }));
-  assert.throws(() => validate({ tool: 'run_powershell', args: { command: 'Remove-Item C:\\' } }));
+  assert.equal(
+    validate({ tool: 'run_powershell', args: { command: 'Get-ItemProperty HKCU:\\Software' } })
+      .risk,
+    3,
+  );
+  assert.throws(() => validate({ tool: 'run_powershell', args: { command: 'Get-Date', risk: 0 } }));
   assert.throws(() => validate({ tool: 'open_url', args: { url: 'file:///C:/Windows' } }));
 });
 test('approval is immutable, single-use, expiring and cancelled by stop', () => {

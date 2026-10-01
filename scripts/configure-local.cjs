@@ -22,8 +22,9 @@ const config = schema.parse({
   microphone: true,
   wakeEnabled: false,
   conversationMode: true,
-  sttModel: 'distil-large-v3',
-  sttModelPath: path.join(root, 'models', 'whisper-distil-large-v3'),
+  sttModel: 'small.en',
+  sttModelPath: path.join(root, 'models', 'whisper-small.en'),
+  sttDevice: 'auto',
   sttLanguage: 'en',
   autoStopSpeech: true,
   pythonPath: path.join(root, '.venv', 'Scripts', 'python.exe'),
@@ -38,12 +39,13 @@ const config = schema.parse({
   keyboard: true,
   browser: true,
   filesystem: true,
-  fileRoot: root,
+  fileRoot: process.env.USERPROFILE,
+  fileAccess: 'computer',
   powershell: true,
   vision: 'manual',
   captureScope: 'screen',
 });
 fs.writeFileSync(file, JSON.stringify(config, null, 2));
 console.log(
-  'JARVIS local configuration saved: British Kokoro voice, distilled Whisper, Qwen 3.5 for chat and vision. Destructive-action confirmations remain enabled.',
+  'JARVIS configured: accelerated English speech, warm British Kokoro, Qwen 3.5, installed-app discovery and computer-wide local file access. Destructive actions and scripts still require confirmation.',
 );

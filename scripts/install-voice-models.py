@@ -15,7 +15,7 @@ for name in ['bm_george', 'bm_daniel', 'bm_lewis', 'bm_fable']:
     voices[name] = np.fromfile(file, dtype='<f4').reshape(-1, 1, 256)
 with open(folder / 'british-voices.bin', 'wb') as stream:
     np.savez(stream, **voices)
-print('British voices ready. Downloading distilled Whisper.', flush=True)
-snapshot_download('Systran/faster-distil-whisper-large-v3', local_dir=root / 'whisper-distil-large-v3',
-                  allow_patterns=['model.bin', 'config.json', 'tokenizer.json', 'vocabulary.json', 'preprocessor_config.json'])
+print('British voices ready. Downloading fast English Whisper.', flush=True)
+snapshot_download('Systran/faster-whisper-small.en', local_dir=root / 'whisper-small.en',
+                  allow_patterns=['model.bin', 'config.json', 'tokenizer.json', 'vocabulary.json', 'vocabulary.txt', 'preprocessor_config.json'])
 print('Local voice models ready.', flush=True)

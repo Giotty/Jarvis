@@ -19,6 +19,7 @@ export type Config = {
   sttModel: string;
   sttModelPath: string;
   sttLanguage: 'en' | 'auto';
+  sttDevice: 'auto' | 'cpu' | 'cuda';
   autoStopSpeech: boolean;
   ttsEngine: 'windows' | 'piper' | 'kokoro';
   piperVoicePath: string;
@@ -43,6 +44,7 @@ export type Config = {
   conversationLogs: boolean;
   memory: boolean;
   fileRoot: string;
+  fileAccess: 'selected' | 'computer';
 };
 export type Stats = {
   cpu: number | null;

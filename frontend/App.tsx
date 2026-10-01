@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Core, Sparkline, Waveform } from './Core';
 import { Settings, Setup } from './Settings';
 import { useVoice } from './useVoice';
+import { SpeechPlayback } from './speechPlayback';
 import { Audit, Config, Confirmation, Memory, Stats, Task, VisionResult, unwrap } from './types';
 const modules = [
   'HOME',
@@ -116,14 +117,16 @@ export function App() {
     commandEpoch = useRef(0),
     acceptReplies = useRef(true);
   configRef.current = config;
-  const outputAudio = useRef<HTMLAudioElement | null>(null),
+  const player = useRef<SpeechPlayback | null>(null),
+    streamedSpeech = useRef(false),
     speechGeneration = useRef(0);
   const interrupt = useCallback(async () => {
     commandEpoch.current++;
     acceptReplies.current = false;
     partialReply.current = null;
     speechGeneration.current++;
-    outputAudio.current?.pause();
+    player.current?.stop();
+    streamedSpeech.current = false;
     speechSynthesis.cancel();
     setConfirmation(null);
     if (window.jarvis) await unwrap(window.jarvis.interrupt());
@@ -138,33 +141,43 @@ export function App() {
       ),
     [],
   );
+  if (!player.current)
+    player.current = new SpeechPlayback({
+      synthesize: async (text) => (await unwrap(window.jarvis!.synthesize(text))).audio,
+      play: (data) => {
+        const audio = new Audio('data:audio/wav;base64,' + data);
+        let finish!: () => void;
+        const done = new Promise<void>((resolve, reject) => {
+          finish = resolve;
+          audio.onended = () => resolve();
+          audio.onerror = () => reject(Error('Local voice playback failed.'));
+          void audio.play().catch(reject);
+        });
+        return {
+          done,
+          stop: () => {
+            audio.pause();
+            audio.onended = null;
+            audio.onerror = null;
+            finish();
+          },
+        };
+      },
+      state: (speaking) => setState((s) => (speaking ? 'SPEAKING' : s === 'SPEAKING' ? 'IDLE' : s)),
+      error: (error) => {
+        report(String(error));
+        setState('ERROR');
+      },
+    });
   const speak = useCallback(
     (text: string) => {
       const c = configRef.current;
       if (!c?.tts) return;
       const generation = ++speechGeneration.current;
-      outputAudio.current?.pause();
+      player.current?.stop();
       speechSynthesis.cancel();
       if (c.ttsEngine !== 'windows' && window.jarvis) {
-        setState('SPEAKING');
-        void unwrap(window.jarvis.synthesize(text.slice(0, 2000)))
-          .then((result) => {
-            if (generation !== speechGeneration.current) return;
-            const audio = new Audio('data:audio/wav;base64,' + result.audio);
-            outputAudio.current = audio;
-            audio.onended = () => setState((s) => (s === 'SPEAKING' ? 'IDLE' : s));
-            audio.onerror = () => {
-              setState('ERROR');
-              report('Local voice playback failed.');
-            };
-            return audio.play();
-          })
-          .catch((error) => {
-            if (generation === speechGeneration.current) {
-              report(String(error));
-              setState('ERROR');
-            }
-          });
+        player.current?.speak(text);
         return;
       }
       if (!('speechSynthesis' in window)) return;
@@ -285,7 +298,25 @@ export function App() {
           break;
         }
         case 'state':
-          setState(e.data as string);
+          if (e.data !== 'IDLE' || !player.current?.speaking) setState(e.data as string);
+          break;
+        case 'speech-start':
+          if (
+            acceptReplies.current &&
+            configRef.current?.tts &&
+            configRef.current.ttsEngine !== 'windows'
+          ) {
+            streamedSpeech.current = true;
+            player.current?.begin();
+          }
+          break;
+        case 'speech-chunk':
+          if (acceptReplies.current && streamedSpeech.current)
+            player.current?.append(e.data as string);
+          break;
+        case 'speech-abort':
+          player.current?.stop();
+          streamedSpeech.current = false;
           break;
         case 'reply':
           if (!acceptReplies.current) break;
@@ -299,7 +330,10 @@ export function App() {
             );
             partialReply.current = null;
           }
-          speechRef.current(e.data as string);
+          if (streamedSpeech.current) {
+            player.current?.finish();
+            streamedSpeech.current = false;
+          } else speechRef.current(e.data as string);
           break;
         case 'reply-chunk': {
           if (!acceptReplies.current) break;
@@ -342,6 +376,11 @@ export function App() {
           break;
         case 'config':
           setConfig(e.data as Config);
+          if (!(e.data as Config).tts) {
+            player.current?.stop();
+            streamedSpeech.current = false;
+            speechSynthesis.cancel();
+          }
           break;
         case 'early-action':
           report(e.data as string);
@@ -358,7 +397,8 @@ export function App() {
           partialReply.current = null;
           voiceRef.current.cancel();
           speechGeneration.current++;
-          outputAudio.current?.pause();
+          player.current?.stop();
+          streamedSpeech.current = false;
           speechSynthesis.cancel();
           setConfirmation(null);
           break;
@@ -401,7 +441,8 @@ export function App() {
     partialReply.current = null;
     voice.cancel();
     speechGeneration.current++;
-    outputAudio.current?.pause();
+    player.current?.stop();
+    streamedSpeech.current = false;
     speechSynthesis.cancel();
     setConfirmation(null);
     if (window.jarvis) await window.jarvis.cancel();
@@ -953,12 +994,17 @@ export function App() {
         {page === 'FILES' && (
           <Panel title="FILESYSTEM WORKSPACE" code="EXPLICIT REQUESTS">
             <p className="analysis-text">
-              Root: {config?.fileRoot || 'Choose an allowed folder in Settings.'}
+              {config?.fileAccess === 'computer'
+                ? 'Computer access • Default folder: '
+                : 'Allowed folder: '}
+              {config?.fileRoot || 'Choose a folder in Settings.'}
             </p>
             <p className="help">
-              Search is limited to the selected root, five directory levels and 5,000 entries. Moves
-              and renames require approval. Deletions go to the Recycle Bin after critical
-              confirmation.
+              {config?.fileAccess === 'computer'
+                ? 'Local drive paths are available under your Windows permissions. '
+                : 'Access is limited to the selected folder. '}
+              Searches return bounded results; specify a directory to narrow them. Moves and renames
+              require approval. Deletions go to the Recycle Bin after critical confirmation.
             </p>
             <label className="field-label">
               FILENAME SEARCH
@@ -972,9 +1018,7 @@ export function App() {
               className="primary"
               disabled={!files}
               onClick={() =>
-                void command(
-                  `Search files for ${JSON.stringify(files)} inside my configured file root.`,
-                )
+                void command(`Search files for ${JSON.stringify(files)} in my default folder.`)
               }
             >
               SEARCH WITH JARVIS

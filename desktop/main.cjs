@@ -98,7 +98,9 @@ function loadConfig() {
 function saveConfig(next) {
   const changedSpeech =
     config &&
-    ['pythonPath', 'sttModelPath', 'sttModel', 'sttLanguage'].some((k) => config[k] !== next[k]);
+    ['pythonPath', 'sttModelPath', 'sttModel', 'sttLanguage', 'sttDevice'].some(
+      (k) => config[k] !== next[k],
+    );
   const changedVoice =
     config &&
     [
@@ -240,7 +242,8 @@ function handlers() {
   });
   handle('interrupt', async () => {
     planner?.cancel();
-    if (speaker?.pending) speaker.stop();
+    // Keep the neural voice loaded. The renderer cancels playback immediately;
+    // finishing an in-flight short chunk avoids reloading on every interruption.
     await Promise.allSettled([...inFlight]);
   });
   handle('confirm', (id, approved) =>
@@ -369,6 +372,15 @@ async function init() {
     host: {
       stats: () => telemetry(),
       openUrl: (url) => shell.openExternal(url),
+      openSystem: (uri) => {
+        if (!uri.startsWith('shell:AppsFolder\\')) return shell.openExternal(uri);
+        const { execFile } = require('node:child_process');
+        return new Promise((resolve, reject) =>
+          execFile('explorer.exe', [uri], { windowsHide: true }, (error) =>
+            error ? reject(error) : resolve(),
+          ),
+        );
+      },
       openPath: (p) => shell.openPath(p),
       trash: (p) => shell.trashItem(p),
       clipboard,
@@ -397,6 +409,7 @@ async function init() {
     },
   });
   planner = new Planner({ ollama, executor, safety, store, emit, audit, config: () => config });
+  void executor.apps.all().catch(() => {});
   vision = new Vision({ capture, ollama, config: () => config });
   win = new BrowserWindow({
     width: 1500,

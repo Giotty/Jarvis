@@ -43,11 +43,11 @@ export class SpeechCapture {
     } else this.frames.push(frame);
     this.duration += ms;
     this.quiet = loud ? 0 : this.quiet + ms;
-    if (!this.previewed && this.duration >= 2000 && this.quiet < 200) {
+    if (!this.previewed && this.duration >= 4500 && this.quiet < 200) {
       this.previewed = true;
       result.preview = this.frames.slice();
     }
-    if (this.duration >= 25000 || (automatic && this.quiet >= 800)) result.final = this.finish();
+    if (this.duration >= 25000 || (automatic && this.quiet >= 600)) result.final = this.finish();
     return result;
   }
 }

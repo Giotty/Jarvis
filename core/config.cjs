@@ -31,10 +31,11 @@ const schema = z
       )
       .default('CommandOrControl+Shift+Space'),
     sttModel: z
-      .enum(['tiny', 'base', 'small', 'medium', 'large-v3', 'distil-large-v3'])
+      .enum(['tiny', 'base', 'small', 'small.en', 'medium', 'large-v3', 'distil-large-v3'])
       .default('base'),
     sttModelPath: z.string().default(''),
     sttLanguage: z.enum(['en', 'auto']).default('en'),
+    sttDevice: z.enum(['auto', 'cpu', 'cuda']).default('auto'),
     autoStopSpeech: z.boolean().default(true),
     ttsEngine: z.enum(['windows', 'piper', 'kokoro']).default('windows'),
     piperVoicePath: z.string().default(''),
@@ -59,6 +60,7 @@ const schema = z
     conversationLogs: z.boolean().default(false),
     memory: z.boolean().default(true),
     fileRoot: z.string().default(''),
+    fileAccess: z.enum(['selected', 'computer']).default('selected'),
   })
   .strict();
 module.exports = { schema, defaults: () => schema.parse({}) };
