@@ -23,6 +23,7 @@ const schema = z
     microphoneId: z.string().default(''),
     wakeWord: z.string().min(1).max(40).default('Jarvis'),
     wakeEnabled: z.boolean().default(false),
+    conversationMode: z.boolean().default(false),
     ptt: z
       .string()
       .regex(

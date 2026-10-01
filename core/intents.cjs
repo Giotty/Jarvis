@@ -15,6 +15,27 @@ function directIntent(input, context = {}) {
   )
     return null;
   const action = (tool, args) => ({ tool, args });
+  const ordinals = [
+    'first',
+    'second',
+    'third',
+    'fourth',
+    'fifth',
+    'sixth',
+    'seventh',
+    'eighth',
+    'ninth',
+    'tenth',
+  ];
+  const video = text.match(
+    /^(?:click(?:\s+on)?|open|play|watch)\s+(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|[1-9]|10)\s+(?:youtube\s+)?(?:video|video result)(?:\s+(?:on|in)\s+(?:the\s+)?(?:page|youtube|results|search results))?$/i,
+  );
+  if (video)
+    return action('open_youtube_result', {
+      index: ordinals.includes(video[1].toLowerCase())
+        ? ordinals.indexOf(video[1].toLowerCase()) + 1
+        : Number(video[1]),
+    });
   let match = text.match(
     /^(?:open|go to|launch)\s+(youtube|google|roblox)\s+(?:and\s+)?(?:search(?:\s+for)?|look\s+for|find)\s+(.+)$/i,
   );
@@ -60,4 +81,17 @@ function directIntent(input, context = {}) {
   }
   return null;
 }
-module.exports = { directIntent };
+function earlyIntent(text) {
+  // Partial transcripts may change. Only reversible, named navigation starts
+  // early; queries, clicks, games and destructive actions wait for the full turn.
+  if (/\b(?:don't|do not|not|never|unless|wait|actually|instead)\b/i.test(text)) return null;
+  const match = text
+    .trim()
+    .replace(/^(?:hey\s+)?jarvis[, :]+/i, '')
+    .replace(/[.!?,]+$/, '')
+    .match(
+      /^(?:please\s+)?(?:open|go to|launch)\s+(youtube|google|notepad|calculator|chrome|edge)(?:\s+and\s+(?:search|find|look)\b.*)?$/i,
+    );
+  return match ? directIntent('open ' + match[1]) : null;
+}
+module.exports = { directIntent, earlyIntent };

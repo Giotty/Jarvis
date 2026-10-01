@@ -4,6 +4,8 @@ const methods = [
   'command',
   'confirm',
   'cancel',
+  'interrupt',
+  'previewSpeech',
   'settings',
   'models',
   'vision',

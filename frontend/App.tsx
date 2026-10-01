@@ -111,10 +111,24 @@ export function App() {
     commandBusy = useRef(false),
     feed = useRef<HTMLDivElement | null>(null),
     configRef = useRef(config),
-    commandRef = useRef<(text: string) => void>(() => {});
+    commandRef = useRef<(text: string, turn?: string) => Promise<void>>(async () => {}),
+    commandFlight = useRef(Promise.resolve()),
+    commandEpoch = useRef(0),
+    acceptReplies = useRef(true);
   configRef.current = config;
   const outputAudio = useRef<HTMLAudioElement | null>(null),
     speechGeneration = useRef(0);
+  const interrupt = useCallback(async () => {
+    commandEpoch.current++;
+    acceptReplies.current = false;
+    partialReply.current = null;
+    speechGeneration.current++;
+    outputAudio.current?.pause();
+    speechSynthesis.cancel();
+    setConfirmation(null);
+    if (window.jarvis) await unwrap(window.jarvis.interrupt());
+    await commandFlight.current;
+  }, []);
   const report = useCallback(
     (text: string, role = 'SYSTEM') =>
       setMessages((m) =>
@@ -167,41 +181,66 @@ export function App() {
       speech.voice = voice;
       speech.onstart = () => setState('SPEAKING');
       speech.onend = () => setState((s) => (s === 'SPEAKING' ? 'IDLE' : s));
-      speech.onerror = () => setState('ERROR');
+      speech.onerror = (event) => {
+        if (
+          generation === speechGeneration.current &&
+          !['interrupted', 'canceled'].includes(event.error)
+        )
+          setState('ERROR');
+      };
       speechSynthesis.speak(speech);
     },
     [voiceName, report],
   );
   const command = useCallback(
-    async (text: string) => {
+    async (text: string, turn?: string) => {
       if (!window.jarvis) {
         report('This browser is a UI preview. Open the desktop application for live capabilities.');
         return;
       }
       if (!text.trim()) return;
+      const epoch = commandEpoch.current;
+      if (turn) {
+        await commandFlight.current;
+        if (epoch !== commandEpoch.current) return;
+      }
       if (commandBusy.current) {
         report('JARVIS is finishing the current task. Press STOP to cancel it.');
         return;
       }
       commandBusy.current = true;
+      acceptReplies.current = true;
+      let settled!: () => void;
+      commandFlight.current = new Promise<void>((resolve) => {
+        settled = resolve;
+      });
       setBusy(true);
       report(text, 'USER');
       setHistory((h) => [text, ...h].slice(0, 100));
       setHistoryIndex(-1);
       try {
-        await unwrap(window.jarvis.command(text));
+        await unwrap(window.jarvis.command(text, turn));
       } catch (e) {
-        report(String(e));
-        setState('ERROR');
+        if (epoch === commandEpoch.current) {
+          report(String(e));
+          setState('ERROR');
+        }
       } finally {
         commandBusy.current = false;
         setBusy(false);
+        settled();
       }
     },
     [report],
   );
-  commandRef.current = (text) => void command(text);
-  const voice = useVoice(config, (text) => commandRef.current(text), report, setState);
+  commandRef.current = command;
+  const voice = useVoice(
+    config,
+    (text, turn) => commandRef.current(text, turn),
+    report,
+    setState,
+    interrupt,
+  );
   const speechRef = useRef(speak),
     voiceRef = useRef(voice);
   speechRef.current = speak;
@@ -249,6 +288,7 @@ export function App() {
           setState(e.data as string);
           break;
         case 'reply':
+          if (!acceptReplies.current) break;
           if (partialReply.current === null) report(e.data as string, 'JARVIS');
           else {
             const id = partialReply.current;
@@ -262,6 +302,7 @@ export function App() {
           speechRef.current(e.data as string);
           break;
         case 'reply-chunk': {
+          if (!acceptReplies.current) break;
           if (partialReply.current === null) {
             const id = nextId.current++;
             partialReply.current = id;
@@ -302,6 +343,9 @@ export function App() {
         case 'config':
           setConfig(e.data as Config);
           break;
+        case 'early-action':
+          report(e.data as string);
+          break;
         case 'memories':
           setMemories(e.data as Memory[]);
           break;
@@ -309,6 +353,8 @@ export function App() {
           voiceRef.current.toggle();
           break;
         case 'stop':
+          commandEpoch.current++;
+          acceptReplies.current = false;
           partialReply.current = null;
           voiceRef.current.cancel();
           speechGeneration.current++;
@@ -522,14 +568,14 @@ export function App() {
               </p>
               <div className="core-actions">
                 <button
-                  disabled={!config || !config.microphone || voice.transcribing || busy}
+                  disabled={!config || !config.microphone}
                   onClick={voice.toggle}
                   className={voice.listening ? 'primary' : ''}
                 >
-                  {voice.transcribing
-                    ? 'TRANSCRIBING…'
-                    : voice.listening
-                      ? '■ STOP LISTENING'
+                  {voice.listening
+                    ? '■ PAUSE LISTENING'
+                    : config?.conversationMode
+                      ? '◉ RESUME CONVERSATION'
                       : '◉ PUSH TO TALK'}
                 </button>
                 <button
@@ -544,10 +590,18 @@ export function App() {
               <Panel title="AUDIO SPECTRUM" code={voice.listening ? 'MIC / LIVE' : 'MIC / STANDBY'}>
                 <Waveform level={voice.level} />
                 <div className="panel-footer">
-                  {config?.wakeEnabled
-                    ? 'WAKE PHRASE: ' + config.wakeWord.toUpperCase()
-                    : 'PUSH-TO-TALK MODE'}
-                  <span>{voice.listening ? 'CAPTURING' : 'NO AUDIO CAPTURE'}</span>
+                  {config?.conversationMode
+                    ? 'HANDS-FREE CONVERSATION'
+                    : config?.wakeEnabled
+                      ? 'WAKE PHRASE: ' + config.wakeWord.toUpperCase()
+                      : 'PUSH-TO-TALK MODE'}
+                  <span>
+                    {voice.transcribing
+                      ? 'RECOGNIZING SPEECH'
+                      : voice.listening
+                        ? 'LISTENING'
+                        : 'MIC PAUSED'}
+                  </span>
                 </div>
               </Panel>
             </div>
@@ -1014,7 +1068,7 @@ export function App() {
             />
             <button
               type="button"
-              disabled={!config || !config.microphone || voice.transcribing || busy}
+              disabled={!config || !config.microphone}
               onClick={voice.toggle}
               aria-label="Toggle microphone"
             >

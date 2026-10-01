@@ -6,6 +6,12 @@ const { searchUrl, findRobloxGames, chooseGame } = require('./web-actions.cjs');
 const text = z.string().min(1).max(8000),
   coord = z.number().int().min(-20000).max(20000);
 const definitions = {
+  open_youtube_result: {
+    risk: 1,
+    permission: 'browser',
+    schema: z.object({ index: z.number().int().min(1).max(10) }).strict(),
+    description: 'Open the first/second/etc visible YouTube video from the current browser page. Uses real accessible video links, never guessed coordinates. Automatic navigation; prefer over locate_ui_element for ordinal video requests.',
+  },
   search_web: {
     risk: 1,
     permission: 'browser',
@@ -566,9 +572,10 @@ class Executor {
             'list_ui_elements',
             'hotkey',
             'window_control',
+            'open_youtube_result',
           ].includes(a.tool)
         )
-          await this.host.prepareInput?.();
+          return this.host.withTarget(() => pythonCall(c, this.worker, { ...a }));
         return pythonCall(c, this.worker, { ...a });
     }
   }

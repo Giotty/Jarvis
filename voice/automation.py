@@ -37,6 +37,9 @@ def execute(tool, args):
     if tool == 'navigate_ui':
         from accessibility import navigate
         return navigate(args['label'])
+    if tool == 'open_youtube_result':
+        from youtube import open_result
+        return open_result(args['index'])
     if tool == 'launch_roblox_game':
         place_id = args['placeId']
         if not isinstance(place_id, int) or place_id <= 0:

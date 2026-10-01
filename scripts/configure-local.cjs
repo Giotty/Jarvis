@@ -21,6 +21,7 @@ const config = schema.parse({
   temperature: 0.25,
   microphone: true,
   wakeEnabled: false,
+  conversationMode: true,
   sttModel: 'distil-large-v3',
   sttModelPath: path.join(root, 'models', 'whisper-distil-large-v3'),
   sttLanguage: 'en',

@@ -114,6 +114,11 @@ export function Settings({ config, models, save, refresh }: Props) {
               'Permission is requested only when listening starts.',
             )}
             {input('pythonPath', 'Python executable path')}
+            {toggle(
+              'conversationMode',
+              'Hands-free live conversation',
+              'Keep listening through replies; speak to interrupt. Pause with the microphone button. Simple named navigation may start before you finish speaking.',
+            )}
             {input('sttModelPath', 'Downloaded Whisper model folder')}
             {select('ttsEngine', 'Local speech engine', ['kokoro', 'piper', 'windows'])}
             {select('sttLanguage', 'Speech language', ['en', 'auto'])}
@@ -166,7 +171,7 @@ export function Settings({ config, models, save, refresh }: Props) {
             {toggle(
               'wakeEnabled',
               'Optional wake phrase',
-              'Uses local transcription of 5-second chunks; higher CPU use and latency.',
+              'Requires the wake phrase before a request when hands-free conversation is off.',
             )}
             {input('wakeWord', 'Wake phrase')}
             {input('ptt', 'Push-to-talk shortcut')}

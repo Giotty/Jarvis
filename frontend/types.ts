@@ -14,6 +14,7 @@ export type Config = {
   microphoneId: string;
   wakeWord: string;
   wakeEnabled: boolean;
+  conversationMode: boolean;
   ptt: string;
   sttModel: string;
   sttModelPath: string;
@@ -118,7 +119,9 @@ export type JarvisAPI = {
       memories: Memory[];
     }>
   >;
-  command: (text: string) => Promise<Result<void>>;
+  command: (text: string, turn?: string) => Promise<Result<void>>;
+  interrupt: () => Promise<Result<void>>;
+  previewSpeech: (text: string, turn: string) => Promise<Result<{ started: boolean }>>;
   confirm: (id: string, yes: boolean) => Promise<Result<void>>;
   cancel: () => Promise<Result<void>>;
   settings: (c: Config) => Promise<Result<Config>>;

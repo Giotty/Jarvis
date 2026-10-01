@@ -25,6 +25,17 @@ const { Executor, pythonCall } = require('../core/tools.cjs');
 const { Planner } = require('../core/planner.cjs');
 const { Vision } = require('../core/vision.cjs');
 const { SpeechWorker } = require('../core/speech.cjs');
+const { targetWindow } = require('../core/window-target.cjs');
+const withTarget = targetWindow(() => win);
+const inFlight = new Set();
+function track(operation) {
+  const pending = operation();
+  inFlight.add(pending);
+  void Promise.resolve(pending)
+    .catch(() => {})
+    .finally(() => inFlight.delete(pending));
+  return pending;
+}
 let speech;
 let speaker;
 function voiceSettings() {
@@ -210,9 +221,30 @@ function handlers() {
     tasks: store.tasks(),
     memories: store.memories(),
   }));
-  handle('command', (text) => planner.command(z.string().trim().min(1).max(8000).parse(text)));
+  handle('command', (text, turn) =>
+    track(() =>
+      planner.command(
+        z.string().trim().min(1).max(8000).parse(text),
+        turn === undefined ? undefined : z.string().uuid().parse(turn),
+      ),
+    ),
+  );
+  handle('previewSpeech', (text, turn) => {
+    if (!config.microphone || !config.conversationMode) return { started: false };
+    return track(() =>
+      planner.preview(
+        z.string().trim().min(1).max(1000).parse(text),
+        z.string().uuid().parse(turn),
+      ),
+    );
+  });
+  handle('interrupt', async () => {
+    planner?.cancel();
+    if (speaker?.pending) speaker.stop();
+    await Promise.allSettled([...inFlight]);
+  });
   handle('confirm', (id, approved) =>
-    planner.confirm(z.string().uuid().parse(id), z.boolean().parse(approved)),
+    track(() => planner.confirm(z.string().uuid().parse(id), z.boolean().parse(approved))),
   );
   handle('cancel', () => emergencyStop());
   handle('settings', (next) => saveConfig(next));
@@ -224,7 +256,7 @@ function handlers() {
       emit('vision', r);
       return r;
     } finally {
-      emit('state', 'IDLE');
+      if (!planner.busy) emit('state', 'IDLE');
     }
   });
   handle('locate', async (label) => {
@@ -269,7 +301,7 @@ function handlers() {
     try {
       return await speech.transcribe(z.string().max(12000000).parse(audio));
     } finally {
-      emit('state', 'IDLE');
+      if (!planner.busy) emit('state', 'IDLE');
     }
   });
   handle('diagnostics', async () => {
@@ -340,27 +372,23 @@ async function init() {
       openPath: (p) => shell.openPath(p),
       trash: (p) => shell.trashItem(p),
       clipboard,
-      prepareInput: async () => {
-        win.hide();
-        await new Promise((r) => setTimeout(r, 350));
-      },
+      withTarget,
       analyze: async () => {
         const result = await vision.analyze(true);
         emit('vision', result);
         return result;
       },
-      locate: async (label) => {
-        win.hide();
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        try {
-          return await pythonCall(config, path.join(workerRoot(), 'automation.py'), {
-            tool: 'locate_accessible_element',
-            args: { label },
-          });
-        } catch {
-          return vision.locate(label);
-        }
-      },
+      locate: (label) =>
+        withTarget(async () => {
+          try {
+            return await pythonCall(config, path.join(workerRoot(), 'automation.py'), {
+              tool: 'locate_accessible_element',
+              args: { label },
+            });
+          } catch {
+            return vision.locate(label);
+          }
+        }),
       remember: (category, content) => {
         const result = store.remember(category, content);
         emit('memories', result);
@@ -385,6 +413,8 @@ async function init() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -452,7 +482,7 @@ async function init() {
     await sample();
     await new Promise((r) => setTimeout(r, 1500));
     const result = await win.webContents.executeJavaScript(
-      `(async()=>{const snapshot=await window.jarvis.snapshot();return {bridge:!!window.jarvis,snapshot: snapshot.ok,config:snapshot.ok?snapshot.data.config:null,headings:[...document.querySelectorAll('h1,h2')].map(x=>x.textContent),cpu:snapshot.ok?snapshot.data.stats.cpu:null,hasNode:typeof require!=='undefined',voices:speechSynthesis.getVoices().filter(v=>v.localService).map(v=>v.name)}})()`,
+      `(async()=>{const snapshot=await window.jarvis.snapshot();let worklet;const audio=new AudioContext({sampleRate:16000});try{await audio.audioWorklet.addModule(new URL('audio-capture.js',document.baseURI).href);await audio.resume();worklet={loaded:true,state:audio.state}}catch(e){worklet={loaded:false,error:e.message}}finally{await audio.close()}return {bridge:!!window.jarvis,snapshot: snapshot.ok,worklet,config:snapshot.ok?snapshot.data.config:null,headings:[...document.querySelectorAll('h1,h2')].map(x=>x.textContent),cpu:snapshot.ok?snapshot.data.stats.cpu:null,hasNode:typeof require!=='undefined',voices:speechSynthesis.getVoices().filter(v=>v.localService).map(v=>v.name)}})()`,
     );
     fs.writeFileSync(path.join(dir, 'smoke-result.json'), JSON.stringify(result, null, 2));
     const shot = await win.webContents.capturePage();
