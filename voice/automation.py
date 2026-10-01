@@ -4,6 +4,23 @@ import sys, json, subprocess, os, ctypes
 def execute(tool, args):
     if sys.platform != 'win32':
         raise RuntimeError('PC control requires Windows.')
+    if tool == 'get_foreground_window':
+        from ctypes import wintypes
+        ctypes.windll.user32.GetForegroundWindow.restype = wintypes.HWND
+        window = ctypes.windll.user32.GetForegroundWindow()
+        title = ctypes.create_unicode_buffer(1024)
+        ctypes.windll.user32.GetWindowTextW(window, title, 1024)
+        rect = wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(window, ctypes.byref(rect))
+        return {'title': title.value, 'bounds': {'x': rect.left, 'y': rect.top, 'width': rect.right - rect.left, 'height': rect.bottom - rect.top}}
+    if tool == 'close_application':
+        import pygetwindow
+        windows = [w for w in pygetwindow.getWindowsWithTitle(args['name']) if w.title and 'JARVIS' not in w.title.upper()]
+        if not windows:
+            raise RuntimeError('No matching application window found.')
+        for window in windows:
+            window.close()
+        return {'success': True, 'requested_close': len(windows)}
     if tool == 'open_application':
         name = args['name']
         apps = {'notepad': ['notepad.exe'], 'calculator': ['calc.exe'], 'explorer': ['explorer.exe'],

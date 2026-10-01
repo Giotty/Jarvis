@@ -1,0 +1,7 @@
+node_modules
+dist
+release
+release-final
+tmp
+.venv
+pnpm-lock.yaml
