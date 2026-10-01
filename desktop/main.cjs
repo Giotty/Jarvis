@@ -145,7 +145,7 @@ function emergencyStop() {
   emit('stop', true);
 }
 async function capture(monitor, width) {
-  const hideAssistant = config.vision === 'manual' && win?.isVisible();
+  const hideAssistant = win?.isVisible();
   if (hideAssistant) {
     win.hide();
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -558,6 +558,10 @@ async function init() {
   await sample();
   timer = setInterval(sample, 3000);
   visionTimer = setInterval(async () => {
+    // Requested observations handle the app behind the HUD. Background vision
+    // must not overwrite that preview with the HUD or compete with a live task.
+    if (win?.isVisible() || planner.busy || ['waiting', 'running'].includes(planner.active?.status))
+      return;
     if (
       config.vision !== 'continuous' &&
       !(config.vision === 'awake' && !['IDLE', 'OFFLINE', 'ERROR'].includes(state))

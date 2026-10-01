@@ -1,5 +1,7 @@
 Screen requests capture the actual foreground application with the JARVIS HUD temporarily hidden. Questions such as "What is on my screen?" attach a fresh screenshot and live Windows accessibility controls to the local vision model. Ordinary conversation does not capture the screen.
 
+Background vision pauses while the HUD is visible or a task is active, so it cannot overwrite a requested observation with the assistant's own window or compete with that task. Explicit observations still capture the application behind the HUD in every enabled vision mode.
+
 "Open the first profile" and "click the account tile" locate a visible target instead of looking for a Start-menu application. Exact accessible labels use actual control centers; described and ordinal targets use the screenshot and available accessible controls. First/second means reading order: top to bottom, left to right. If there is no confident target, JARVIS stops and reports the reason.
 
 General clicks still require confirmation. The approval shows the observed target, window title and physical coordinates. Before input, JARVIS rechecks the window, target image and window under the pointer. Changed, covered, expired or cancelled targets are not clicked. This does not verify the resulting page; the reply says when only click dispatch was checked. Existing automatic search/navigation and sensitive-action confirmation remain enabled.
