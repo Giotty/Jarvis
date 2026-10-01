@@ -29,6 +29,7 @@ class Ollama {
         messages,
         tools,
         stream: false,
+        think: false,
         options: { temperature: c.temperature, num_ctx: c.context },
       })
     ).message;

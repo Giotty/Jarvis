@@ -16,6 +16,9 @@ export type Config = {
   wakeEnabled: boolean;
   ptt: string;
   sttModel: string;
+  sttModelPath: string;
+  ttsEngine: 'windows' | 'piper';
+  piperVoicePath: string;
   pythonPath: string;
   tts: boolean;
   speechSpeed: number;
@@ -126,6 +129,7 @@ export type JarvisAPI = {
   tasks: () => Promise<Result<Task[]>>;
   logs: () => Promise<Result<Audit[]>>;
   transcribe: (audio: string) => Promise<Result<{ text: string }>>;
+  synthesize: (text: string) => Promise<Result<{ audio: string }>>;
   diagnostics: () => Promise<Result<Diagnostics>>;
   selectRoot: () => Promise<Result<string | null>>;
   window: (action: string) => Promise<Result<void>>;

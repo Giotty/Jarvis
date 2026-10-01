@@ -111,6 +111,8 @@ export function App() {
     configRef = useRef(config),
     commandRef = useRef<(text: string) => void>(() => {});
   configRef.current = config;
+  const outputAudio = useRef<HTMLAudioElement | null>(null),
+    speechGeneration = useRef(0);
   const report = useCallback(
     (text: string, role = 'SYSTEM') =>
       setMessages((m) =>
@@ -123,8 +125,33 @@ export function App() {
   const speak = useCallback(
     (text: string) => {
       const c = configRef.current;
-      if (!c?.tts || !('speechSynthesis' in window)) return;
+      if (!c?.tts) return;
+      const generation = ++speechGeneration.current;
+      outputAudio.current?.pause();
       speechSynthesis.cancel();
+      if (c.ttsEngine === 'piper' && window.jarvis) {
+        setState('SPEAKING');
+        void unwrap(window.jarvis.synthesize(text.slice(0, 2000)))
+          .then((result) => {
+            if (generation !== speechGeneration.current) return;
+            const audio = new Audio('data:audio/wav;base64,' + result.audio);
+            outputAudio.current = audio;
+            audio.onended = () => setState((s) => (s === 'SPEAKING' ? 'IDLE' : s));
+            audio.onerror = () => {
+              setState('ERROR');
+              report('Piper audio playback failed.');
+            };
+            return audio.play();
+          })
+          .catch((error) => {
+            if (generation === speechGeneration.current) {
+              report(String(error));
+              setState('ERROR');
+            }
+          });
+        return;
+      }
+      if (!('speechSynthesis' in window)) return;
       const speech = new SpeechSynthesisUtterance(text);
       speech.rate = c.speechSpeed;
       speech.volume = c.speechVolume;
@@ -239,6 +266,8 @@ export function App() {
           break;
         case 'stop':
           voiceRef.current.cancel();
+          speechGeneration.current++;
+          outputAudio.current?.pause();
           speechSynthesis.cancel();
           setConfirmation(null);
           break;
@@ -279,6 +308,8 @@ export function App() {
   };
   const stop = async () => {
     voice.cancel();
+    speechGeneration.current++;
+    outputAudio.current?.pause();
     speechSynthesis.cancel();
     setConfirmation(null);
     if (window.jarvis) await window.jarvis.cancel();
@@ -1008,13 +1039,17 @@ export function App() {
       {page === 'SETTINGS' && config?.tts && (
         <div className="voice-selector">
           <label>
-            LOCAL TTS VOICE{' '}
-            <select value={voiceName} onChange={(e) => setVoiceName(e.target.value)}>
-              <option value="">System local default</option>
-              {voices.map((v) => (
-                <option key={v.name}>{v.name}</option>
-              ))}
-            </select>
+            {config.ttsEngine === 'piper' ? 'PIPER LOCAL VOICE' : 'LOCAL WINDOWS VOICE'}{' '}
+            {config.ttsEngine === 'piper' ? (
+              <span>{config.piperVoicePath.split(/[\\/]/).pop()}</span>
+            ) : (
+              <select value={voiceName} onChange={(e) => setVoiceName(e.target.value)}>
+                <option value="">System local default</option>
+                {voices.map((v) => (
+                  <option key={v.name}>{v.name}</option>
+                ))}
+              </select>
+            )}
           </label>
           <button onClick={() => speak('JARVIS voice system ready.')}>TEST VOICE</button>
           <button onClick={() => setSetup(true)}>RUN SETUP CHECKS</button>

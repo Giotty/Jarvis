@@ -1,3 +1,5 @@
 faster-whisper>=1.2,<2
 pyautogui>=0.9.54,<1
 pyperclip>=1.9,<2
+piper-tts>=1.8,<2
+pillow>=12,<13

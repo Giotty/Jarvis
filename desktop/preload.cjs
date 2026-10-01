@@ -15,6 +15,7 @@ const methods = [
   'logs',
   'tasks',
   'transcribe',
+  'synthesize',
   'diagnostics',
   'selectRoot',
   'window',

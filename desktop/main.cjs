@@ -101,6 +101,18 @@ function emergencyStop() {
   emit('stop', true);
 }
 async function capture(monitor, width) {
+  const hideAssistant = config.vision === 'manual' && win?.isVisible();
+  if (hideAssistant) {
+    win.hide();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  try {
+    return await captureFrame(monitor, width);
+  } finally {
+    if (hideAssistant && !win.isDestroyed()) win.showInactive();
+  }
+}
+async function captureFrame(monitor, width) {
   if (config.captureScope === 'active-window') {
     const info = await pythonCall(config, path.join(workerRoot(), 'automation.py'), {
       tool: 'get_foreground_window',
@@ -216,6 +228,22 @@ function handlers() {
   handle('clearMemory', () => store.clear());
   handle('logs', () => audit.items);
   handle('tasks', () => store.tasks());
+  handle('synthesize', async (text) => {
+    if (!config.tts || config.ttsEngine !== 'piper') throw Error('Piper output is not enabled.');
+    if (!config.piperVoicePath || !fs.existsSync(config.piperVoicePath))
+      throw Error('Piper voice file is unavailable.');
+    return pythonCall(
+      config,
+      path.join(workerRoot(), 'synthesize.py'),
+      {
+        text: z.string().min(1).max(2000).parse(text),
+        voice: config.piperVoicePath,
+        speed: config.speechSpeed,
+        volume: config.speechVolume,
+      },
+      60000,
+    );
+  });
   handle('transcribe', async (audio) => {
     if (!config.microphone) throw Error('Microphone privacy is disabled.');
     emit('state', 'TRANSCRIBING');

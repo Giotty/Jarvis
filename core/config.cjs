@@ -32,6 +32,9 @@ const schema = z
     sttModel: z
       .enum(['tiny', 'base', 'small', 'medium', 'large-v3', 'distil-large-v3'])
       .default('base'),
+    sttModelPath: z.string().default(''),
+    ttsEngine: z.enum(['windows', 'piper']).default('windows'),
+    piperVoicePath: z.string().default(''),
     pythonPath: z.string().default('python'),
     tts: z.boolean().default(true),
     speechSpeed: z.number().min(0.5).max(2).default(1),

@@ -114,6 +114,9 @@ export function Settings({ config, models, save, refresh }: Props) {
               'Permission is requested only when listening starts.',
             )}
             {input('pythonPath', 'Python executable path')}
+            {input('sttModelPath', 'Downloaded Whisper model folder')}
+            {select('ttsEngine', 'Local speech engine', ['piper', 'windows'])}
+            {input('piperVoicePath', 'Piper voice ONNX path')}
             {select('sttModel', 'Local Whisper model', [
               'tiny',
               'base',
@@ -153,7 +156,7 @@ export function Settings({ config, models, save, refresh }: Props) {
             )}
             {input('wakeWord', 'Wake phrase')}
             {input('ptt', 'Push-to-talk shortcut')}
-            {toggle('tts', 'Speak responses with local Windows voices')}
+            {toggle('tts', 'Speak responses with the selected local engine')}
             {input('speechSpeed', 'Speech speed', 'number', 0.5, 2)}
             {input('speechVolume', 'Speech volume', 'number', 0, 1)}
           </>

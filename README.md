@@ -1,5 +1,7 @@
 # JARVIS
 
+Local setup on the owner's PC now uses Ollama at `http://127.0.0.1:11434`, `qwen3:8b` for chat/tools, `gemma3:4b` for vision, downloaded Whisper small weights, and Piper `en_US-lessac-medium`. Double-click `Launch-JARVIS.cmd` to start the configured desktop app and Ollama. Local model weights and machine-specific configuration are excluded from Git. Live controls are enabled; confirmations remain mandatory. File access is initially limited to this JARVIS directory.
+
 A local-first Windows desktop assistant with an original cyan HUD, animated neural core, system telemetry, voice input, local model integration, screen analysis, structured tools, an action planner and an approval interlock. No paid APIs are required. This is an initial functional release; see the limitations below before enabling live control.
 
 ## Desktop interface
@@ -74,7 +76,7 @@ The installer creates a normal Start menu entry and optional desktop shortcut. T
 
 `pnpm test` covers configuration privacy defaults, fixed risk levels, mock execution, approvals, filesystem traversal, SQLite persistence, planner pause/resume, denial, invalid tools, unchanged vision frames, metadata-only logs and real telemetry. `pnpm build` verifies strict TypeScript and frontend bundling.
 
-Not included: OCR, foreground-window identity enforcement before actions, dedicated low-latency wake-word engine, Piper neural voices, streaming LLM output, guaranteed browser task completion, arbitrary application discovery, precise Windows master-volume API, automatic conversation summaries, software installation, elevated/admin commands or permanent deletion. Optional devices, Whisper, actual Ollama models and physical automation require local setup and must be tested on the user's hardware. GPU/VRAM readings depend on driver support. Model suggestions can be wrong; review plans and approval dialogs.
+Not included: OCR, foreground-window identity enforcement before actions, dedicated low-latency wake-word engine, streaming LLM output, guaranteed browser task completion, arbitrary application discovery, precise Windows master-volume API, automatic conversation summaries, software installation, elevated/admin commands or permanent deletion. Physical automation and devices must be tested by the user. GPU/VRAM readings depend on driver support. Model suggestions can be wrong; review plans and approval dialogs.
 
 ## Repository protection
 

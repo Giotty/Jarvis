@@ -57,7 +57,13 @@ class SpeechWorker {
     this.start();
     return new Promise((resolve, reject) => {
       this.pending = { resolve, reject, timer: setTimeout(() => this.stop(), 180000) };
-      this.child.stdin.write(JSON.stringify({ audio, model: this.config().sttModel }) + '\n');
+      this.child.stdin.write(
+        JSON.stringify({
+          audio,
+          model: this.config().sttModel,
+          modelPath: this.config().sttModelPath,
+        }) + '\n',
+      );
     });
   }
 }
