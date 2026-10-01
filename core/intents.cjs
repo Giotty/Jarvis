@@ -1,11 +1,51 @@
+function screenRequest(text) {
+  if (/\b(?:don't|do not|never)\b.*\b(?:click|select|choose|press|tap|open)\b/i.test(text))
+    return null;
+  const act = /\b(?:click(?:\s+on)?|select|choose|press|tap|open)\s+(.+)/i.exec(text);
+  const target = act?.[1];
+  if (
+    target &&
+    /\b(?:and then|then|and)\s+(?:open|click|select|choose|press|send|delete|type)\b/i.test(target)
+  )
+    return { click: false };
+  if (
+    target &&
+    (/\b(?:click|select|choose|press|tap)\b/i.test(act[0]) ||
+      /\b(?:profiles?|accounts?|buttons?|icons?|tiles?|links?|tabs?|items?|avatars?|first|second|third|leftmost|rightmost)\b/i.test(
+        target,
+      ))
+  )
+    return {
+      click: true,
+      label: target
+        .replace(/[.!?]+$/, '')
+        .trim()
+        .slice(0, 200),
+    };
+  if (
+    /\b(?:look at|see|show|describe|what.*(?:on|in))\b.*\b(?:screen|window|page|app|launcher|profiles?|steam)\b/i.test(
+      text,
+    )
+  )
+    return { click: false };
+  if (/\b(?:what (?:can|do) you see|look at this|look at my screen)\b/i.test(text))
+    return { click: false };
+  return null;
+}
 function directIntent(input, context = {}) {
   const text = input
     .trim()
     .replace(/[.!?]+$/, '')
+    .replace(/^(?:okay|ok|alright)[, :]+/i, '')
     .replace(/^(?:hey\s+)?jarvis[, :]+/i, '')
     .replace(/^(?:can|could|would) you\s+/i, '')
     .replace(/^please\s+/i, '')
     .replace(/\s+please$/i, '');
+  // Screen-relative targets are not installed application names. Even a compound
+  // request such as "look at Steam and open the first profile" must see the UI.
+  const screen = screenRequest(text);
+  if (screen?.click && !/\b(?:video|youtube)\b/i.test(screen.label))
+    return { tool: 'click_visible_target', args: { label: screen.label } };
   // Leave multi-step requests to the planner rather than treating later actions
   // as part of a search query and silently dropping them.
   if (
@@ -80,6 +120,13 @@ function directIntent(input, context = {}) {
     });
   }
   match = text.match(
+    /^(?:open|launch|start)\s+(?:the\s+)?(steam|epic games?(?: launcher)?)(?:\s+app)?$/i,
+  );
+  if (match)
+    return action('open_application', {
+      name: /^steam$/i.test(match[1]) ? 'Steam' : 'Epic Games Launcher',
+    });
+  match = text.match(
     /^(?:open|show|go to)\s+(?:windows\s+)?settings(?:\s+(?:for|to|on)\s+(.+))?$/i,
   );
   if (match) return action('open_settings', { page: match[1] || '' });
@@ -98,7 +145,11 @@ function directIntent(input, context = {}) {
       { path: match[1] },
     );
   match = text.match(/^(?:open|launch|start)\s+(?:the\s+)?(.+?)(?:\s+app)?$/i);
-  if (match && !/\b(?:file|folder|game|called|named|in|on|with|and|search)\b/i.test(match[1]))
+  if (
+    match &&
+    !screen &&
+    !/\b(?:file|folder|game|called|named|in|on|with|and|search)\b/i.test(match[1])
+  )
     return action('open_application', { name: match[1] });
   return null;
 }
@@ -126,4 +177,4 @@ function earlyIntent(text) {
     );
   return match ? directIntent('open ' + match[1]) : null;
 }
-module.exports = { directIntent, earlyIntent, conversationOnly };
+module.exports = { directIntent, earlyIntent, conversationOnly, screenRequest };

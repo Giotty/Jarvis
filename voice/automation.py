@@ -2,6 +2,22 @@
 import sys, json, subprocess, os, ctypes
 from pathlib import Path
 
+def foreground():
+    from ctypes import wintypes
+    user = ctypes.windll.user32
+    user.GetForegroundWindow.restype = wintypes.HWND
+    user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    window = user.GetForegroundWindow()
+    title = ctypes.create_unicode_buffer(1024)
+    user.GetWindowTextW(window, title, 1024)
+    rect, pid = wintypes.RECT(), wintypes.DWORD()
+    user.GetWindowRect(window, ctypes.byref(rect))
+    user.GetWindowThreadProcessId(window, ctypes.byref(pid))
+    return {'hwnd': int(window or 0), 'pid': pid.value, 'title': title.value,
+            'bounds': {'x': rect.left, 'y': rect.top, 'width': rect.right - rect.left, 'height': rect.bottom - rect.top}}
+
 def roblox_executable():
     # Prefer the installed protocol's current client, never the installer.
     import winreg
@@ -25,6 +41,15 @@ def roblox_executable():
 def execute(tool, args):
     if sys.platform != 'win32':
         raise RuntimeError('PC control requires Windows.')
+    # UI Automation, monitor captures and input all use physical desktop pixels.
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (AttributeError, OSError):
+        ctypes.windll.user32.SetProcessDPIAware()
+    if tool == 'launch_registered_app':
+        from registered_apps import launch
+        return launch(args['appId'], args['risk'])
     if tool == 'list_ui_elements':
         from accessibility import describe
         return describe()
@@ -48,14 +73,7 @@ def execute(tool, args):
         os.startfile('roblox://placeId=' + str(place_id))
         return {'dispatched': True, 'joined': False}
     if tool == 'get_foreground_window':
-        from ctypes import wintypes
-        ctypes.windll.user32.GetForegroundWindow.restype = wintypes.HWND
-        window = ctypes.windll.user32.GetForegroundWindow()
-        title = ctypes.create_unicode_buffer(1024)
-        ctypes.windll.user32.GetWindowTextW(window, title, 1024)
-        rect = wintypes.RECT()
-        ctypes.windll.user32.GetWindowRect(window, ctypes.byref(rect))
-        return {'title': title.value, 'bounds': {'x': rect.left, 'y': rect.top, 'width': rect.right - rect.left, 'height': rect.bottom - rect.top}}
+        return foreground()
     if tool == 'close_application':
         import pygetwindow
         windows = [w for w in pygetwindow.getWindowsWithTitle(args['name']) if w.title and 'JARVIS' not in w.title.upper()]
@@ -89,6 +107,22 @@ def execute(tool, args):
     import pyautogui as pg
     pg.FAILSAFE = True
     pg.PAUSE = .15
+    if tool == 'click_verified':
+        from ctypes import wintypes
+        current = foreground()
+        if current != args['window']:
+            raise RuntimeError('The target window changed; no click was performed. Ask again.')
+        pg.moveTo(args['x'], args['y'], duration=.15)
+        user = ctypes.windll.user32
+        user.WindowFromPoint.argtypes = [wintypes.POINT]
+        user.WindowFromPoint.restype = wintypes.HWND
+        user.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user.GetAncestor.restype = wintypes.HWND
+        hit = user.GetAncestor(user.WindowFromPoint(wintypes.POINT(args['x'], args['y'])), 2)
+        if int(hit or 0) != current['hwnd'] or foreground() != current:
+            raise RuntimeError('The target is covered or its window changed; no click was performed.')
+        pg.click()
+        return {'dispatched': True, 'verified_target': True, 'page_change_verified': False}
     if tool == 'move_mouse': pg.moveTo(args['x'], args['y'], duration=.2)
     elif tool == 'click_mouse':
         pg.moveTo(args['x'], args['y'], duration=.2)

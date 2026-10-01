@@ -76,7 +76,7 @@ class WindowsApps {
       total: matches.length,
     };
   }
-  async open(name, approvedRisk, openNamespace) {
+  async open(name, approvedRisk, openNamespace, launchRegistered) {
     const { selected, matches } = chooseApp(name, await this.all());
     if (!selected)
       return {
@@ -97,7 +97,12 @@ class WindowsApps {
       approvedRisk < 3
     )
       throw Error('This app entry runs a script or installer and requires approval.');
-    await openNamespace('shell:AppsFolder\\' + selected.AppID);
+    if (/^(?:\{[0-9a-f-]{36}\}\\|[a-z]:[\\/])/i.test(selected.AppID)) {
+      if (!launchRegistered) throw Error('Registered desktop launcher is unavailable.');
+      await launchRegistered(selected.AppID, approvedRisk);
+    } else {
+      await openNamespace('shell:AppsFolder\\' + selected.AppID);
+    }
     return {
       dispatched: true,
       application: selected.Name,

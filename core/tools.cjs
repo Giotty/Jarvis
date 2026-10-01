@@ -7,6 +7,13 @@ const system = require('./windows-system.cjs');
 const text = z.string().min(1).max(8000),
   coord = z.number().int().min(-20000).max(20000);
 const definitions = {
+  click_visible_target: {
+    risk: 2,
+    permission: 'mouse',
+    schema: z.object({ label: z.string().min(1).max(200) }).strict(),
+    description:
+      'Inspect the actual foreground screen and click a described visible target, including first/second profiles or icons. Target is located before confirmation and rechecked before clicking. Prefer this to guessed mouse coordinates; never relaunch an app to select something inside it.',
+  },
   list_installed_apps: {
     risk: 0,
     permission: 'browser',
@@ -487,6 +494,16 @@ class Executor {
     this.games = new Map();
     this.apps = new system.WindowsApps();
   }
+  async observe(signal) {
+    return this.host.observe(signal);
+  }
+  async prepare(action, signal) {
+    const a = validate(action);
+    if (a.tool !== 'click_visible_target') return;
+    if (!this.config().mouse) throw Error('mouse control is disabled.');
+    if (this.config().mock) return;
+    return this.host.prepareTarget(a.args.label, signal);
+  }
   async execute(action, signal) {
     const a = validate(action),
       c = this.config();
@@ -514,6 +531,9 @@ class Executor {
       return { mock: true, message: `Simulated ${a.tool}; no PC input or file changes.` };
     const p = a.args;
     switch (a.tool) {
+      case 'click_visible_target':
+        if (!action.target) throw Error('Observe and approve the visible target first.');
+        return this.host.clickTarget(action.target, signal);
       case 'list_installed_apps':
         return this.apps.list(p.query);
       case 'open_settings': {
@@ -545,7 +565,13 @@ class Executor {
             if (name === 'roblox') throw error;
           }
         }
-        return this.apps.open(p.name, a.risk, (uri) => this.host.openSystem(uri));
+        return this.apps.open(
+          p.name,
+          a.risk,
+          (uri) => this.host.openSystem(uri),
+          (appId, risk) =>
+            pythonCall(c, this.worker, { tool: 'launch_registered_app', args: { appId, risk } }),
+        );
       }
       case 'launch_executable': {
         const executable = await system.resolveFile({ ...c, fileAccess: 'computer' }, p.path);

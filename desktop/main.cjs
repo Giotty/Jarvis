@@ -26,6 +26,7 @@ const { Planner } = require('../core/planner.cjs');
 const { Vision } = require('../core/vision.cjs');
 const { SpeechWorker } = require('../core/speech.cjs');
 const { targetWindow } = require('../core/window-target.cjs');
+const { ScreenTargets } = require('../core/screen-targets.cjs');
 const withTarget = targetWindow(() => win);
 const inFlight = new Set();
 function track(operation) {
@@ -155,17 +156,21 @@ async function capture(monitor, width) {
     if (hideAssistant && !win.isDestroyed()) win.showInactive();
   }
 }
-async function captureFrame(monitor, width) {
+async function captureFrame(monitor, width, target) {
   if (config.captureScope === 'active-window') {
-    const info = await pythonCall(config, path.join(workerRoot(), 'automation.py'), {
-      tool: 'get_foreground_window',
-      args: {},
-    });
+    const info =
+      target ||
+      (await pythonCall(config, path.join(workerRoot(), 'automation.py'), {
+        tool: 'get_foreground_window',
+        args: {},
+      }));
     const windows = await desktopCapturer.getSources({
       types: ['window'],
       thumbnailSize: { width, height: Math.round(width * 0.75) },
     });
-    const source = windows.find((s) => s.name === info.title);
+    const source =
+      windows.find((s) => s.id.split(':')[1] === String(info.hwnd)) ||
+      windows.find((s) => s.name === info.title);
     if (!source) throw Error('Active window capture unavailable.');
     const size = source.thumbnail.getSize();
     return {
@@ -179,6 +184,13 @@ async function captureFrame(monitor, width) {
     };
   }
   const displays = screen.getAllDisplays();
+  if (target) {
+    const point = screen.screenToDipPoint({
+      x: Math.round(target.bounds.x + target.bounds.width / 2),
+      y: Math.round(target.bounds.y + target.bounds.height / 2),
+    });
+    monitor = String(screen.getDisplayNearestPoint(point).id);
+  }
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width, height: Math.round(width * 0.75) },
@@ -188,6 +200,7 @@ async function captureFrame(monitor, width) {
   const display = displays.find((d) => String(d.id) === source.display_id) || displays[0];
   const size = source.thumbnail.getSize();
   const small = source.thumbnail.resize({ width: 32, height: 18 }).toBitmap();
+  const physicalOrigin = screen.dipToScreenPoint({ x: display.bounds.x, y: display.bounds.y });
   return {
     image: source.thumbnail.toJPEG(75).toString('base64'),
     pixels: small,
@@ -196,8 +209,8 @@ async function captureFrame(monitor, width) {
     monitor: source.display_id,
     monitors: displays.map((d) => ({ id: String(d.id), bounds: d.bounds })),
     bounds: {
-      x: Math.round(display.bounds.x * display.scaleFactor),
-      y: Math.round(display.bounds.y * display.scaleFactor),
+      x: physicalOrigin.x,
+      y: physicalOrigin.y,
       width: Math.round(display.bounds.width * display.scaleFactor),
       height: Math.round(display.bounds.height * display.scaleFactor),
     },
@@ -365,6 +378,53 @@ async function init() {
   store = await new Store().init(dir);
   ollama = new Ollama(() => config);
   const safety = new Safety();
+  const nativeCall = (tool, args = {}) =>
+    pythonCall(config, path.join(workerRoot(), 'automation.py'), { tool, args });
+  const targetFrame = async (window) => {
+    if (config.vision === 'off')
+      throw Error('Screen vision is off. Enable it in Settings to inspect visible targets.');
+    return captureFrame(config.monitor, config.imageQuality, window);
+  };
+  const publishFrame = (frame, description) =>
+    emit('vision', {
+      preview: 'data:image/jpeg;base64,' + frame.image,
+      description,
+      monitor: frame.monitor,
+      monitors: frame.monitors,
+      analyzed: Date.now(),
+      width: frame.width,
+      height: frame.height,
+      elements: [],
+    });
+  const targets = new ScreenTargets({
+    withTarget,
+    window: () => nativeCall('get_foreground_window'),
+    capture: targetFrame,
+    locate: async (label, frame, signal) => {
+      let located;
+      let elements = [];
+      try {
+        elements = (await nativeCall('list_ui_elements')).elements;
+      } catch {}
+      const exact = elements.filter((e) => e.label.toLowerCase() === label.toLowerCase());
+      if (exact.length === 1) located = { ...exact[0], confidence: 1 };
+      else located = await vision.locate(label, frame, signal, elements);
+      publishFrame(frame, `Located ${located.label || label} for your requested click.`);
+      return located;
+    },
+    fingerprint: (frame, point) => {
+      const image = nativeImage.createFromDataURL('data:image/jpeg;base64,' + frame.image);
+      const cx = Math.round(((point.x - frame.bounds.x) * frame.width) / frame.bounds.width);
+      const cy = Math.round(((point.y - frame.bounds.y) * frame.height) / frame.bounds.height);
+      const x = Math.max(0, cx - 24),
+        y = Math.max(0, cy - 24);
+      const width = Math.min(48, frame.width - x),
+        height = Math.min(48, frame.height - y);
+      if (width <= 0 || height <= 0) throw Error('The target is outside the captured screen.');
+      return image.crop({ x, y, width, height }).resize({ width: 24, height: 24 }).toBitmap();
+    },
+    click: (args) => nativeCall('click_verified', args),
+  });
   const executor = new Executor({
     config: () => config,
     worker: path.join(workerRoot(), 'automation.py'),
@@ -385,6 +445,23 @@ async function init() {
       trash: (p) => shell.trashItem(p),
       clipboard,
       withTarget,
+      prepareTarget: (label, signal) => targets.prepare(label, signal),
+      clickTarget: (target, signal) => targets.execute(target, signal),
+      observe: (signal) =>
+        withTarget(async () => {
+          signal?.throwIfAborted();
+          const window = await nativeCall('get_foreground_window');
+          const frame = await targetFrame(window);
+          let controls;
+          try {
+            controls = await nativeCall('list_ui_elements');
+          } catch {
+            controls = { elements: [], message: 'Accessibility unavailable; use the screenshot.' };
+          }
+          signal?.throwIfAborted();
+          publishFrame(frame, `Current foreground screen: ${window.title}`);
+          return { image: frame.image, context: { window, controls } };
+        }),
       analyze: async () => {
         const result = await vision.analyze(true);
         emit('vision', result);

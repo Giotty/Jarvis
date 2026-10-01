@@ -31,7 +31,7 @@ def recognize(audio, language, warm=False):
                                   beam_size=1, best_of=1, condition_on_previous_text=False,
                                   vad_filter=not warm, vad_parameters={'min_silence_duration_ms': 250},
                                   without_timestamps=True, max_new_tokens=1 if warm else 256,
-                                  hotwords=None if warm else 'Jarvis, Roblox, YouTube, MrBeast', temperature=0)
+                                  hotwords=None if warm else 'Jarvis, Steam, Epic Games Launcher, Roblox, YouTube, MrBeast', temperature=0)
     return ' '.join(s.text for s in segments).strip()
 for line in sys.stdin:
     try:

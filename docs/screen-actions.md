@@ -1,0 +1,9 @@
+Screen requests capture the actual foreground application with the JARVIS HUD temporarily hidden. Questions such as "What is on my screen?" attach a fresh screenshot and live Windows accessibility controls to the local vision model. Ordinary conversation does not capture the screen.
+
+"Open the first profile" and "click the account tile" locate a visible target instead of looking for a Start-menu application. Exact accessible labels use actual control centers; described and ordinal targets use the screenshot and available accessible controls. First/second means reading order: top to bottom, left to right. If there is no confident target, JARVIS stops and reports the reason.
+
+General clicks still require confirmation. The approval shows the observed target, window title and physical coordinates. Before input, JARVIS rechecks the window, target image and window under the pointer. Changed, covered, expired or cancelled targets are not clicked. This does not verify the resulting page; the reply says when only click dispatch was checked. Existing automatic search/navigation and sensitive-action confirmation remain enabled.
+
+Steam and Epic's registered desktop Start-menu IDs are resolved with Windows SHGetKnownFolderPath and launched as executable argument arrays. Store application IDs retain their AppsFolder route. Registered paths must exist; installer/script aliases do not gain automatic execution.
+
+For manual verification, launch with Launch-JARVIS.cmd, open Steam or Epic, bring its account/profile chooser to the foreground, ask "What is on my screen?", then "Open the first profile". Review the target in the approval dialog. Also verify the screen preview shows the intended application rather than the JARVIS HUD. Screen vision and mouse permission must be enabled in Settings. Test with another monitor if used. No changes to voice models or inference settings are needed.
