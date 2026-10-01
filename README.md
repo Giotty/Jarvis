@@ -1,6 +1,8 @@
 # JARVIS
 
-Local setup on the owner's PC now uses Ollama at `http://127.0.0.1:11434`, `qwen3:8b` for chat/tools, `gemma3:4b` for vision, downloaded Whisper small weights, and Piper `en_US-lessac-medium`. Double-click `Launch-JARVIS.cmd` to start the configured desktop app and Ollama. Local model weights and machine-specific configuration are excluded from Git. Live controls are enabled; confirmations remain mandatory. File access is initially limited to this JARVIS directory.
+Local setup on the owner's PC uses Ollama at `http://127.0.0.1:11434`, `qwen3.5:9b` for chat, tools and vision, distilled Whisper large-v3 for English recognition, and Kokoro's British male `bm_george` voice. Double-click `Launch-JARVIS.cmd`. Speech models stay warm; recording can finish after a pause; chat replies stream onto the HUD. Recent conversation context stays in memory until exit. Local weights and machine-specific configuration are excluded from Git. File access is initially limited to this JARVIS directory.
+
+Try “Open YouTube and search MrBeast”, “Play Blox Fruits in Roblox”, or “Open a game in Roblox” followed by its name. Searches and verified ordinary navigation run automatically. General typing focuses a real accessible edit field and verifies its value. Destructive actions and sending messages retain confirmation. To reproduce the voice setup, install `voice/requirements.txt`, run `scripts/install-voice-models.py` with that Python, then run `node scripts/install-models.cjs` and `node scripts/configure-local.cjs`.
 
 A local-first Windows desktop assistant with an original cyan HUD, animated neural core, system telemetry, voice input, local model integration, screen analysis, structured tools, an action planner and an approval interlock. No paid APIs are required. This is an initial functional release; see the limitations below before enabling live control.
 
@@ -13,7 +15,7 @@ The command center combines rotating SVG rings, CPU/RAM/GPU graphs, a live clock
 - `frontend/`: React + strict TypeScript + Vite; CSS animations and SVG HUD graphics.
 - `desktop/`: Electron main process and isolated, sandboxed preload bridge. Tray, startup, screen capture and Windows integration.
 - `core/`: local Ollama API, SQLite via sql.js, telemetry, validated tools, safety, planner and frame-difference vision.
-- `voice/`: optional Python CPU/int8 faster-whisper and PyAutoGUI workers. Text-to-speech uses installed local Windows voices.
+- `voice/`: warm local Whisper and Kokoro/Piper workers, PyAutoGUI, and Windows UI Automation for accessible controls and verified typing. Windows voices remain an alternative.
 - `tests/`: safety, parameter validation, planner, persistence, privacy, vision and telemetry tests.
 
 Electron was selected because Node is available on the target machine, Rust is not, and Electron supports tray, capture and desktop packaging without introducing a Rust toolchain. No TCP control server is exposed. Renderer access is through a finite set of validated IPC handlers.
@@ -35,7 +37,7 @@ pnpm dev
 Install Ollama from [ollama.com](https://ollama.com/download/windows), start it, then install a model appropriate for your computer. The app never installs Ollama or downloads models on your behalf. For example:
 
 ```powershell
-ollama pull qwen3:8b
+ollama pull qwen3.5:9b
 ```
 
 In Settings → AI, refresh installed models and choose a conversation model. Tool-calling support is needed for automation. Choose a vision-capable model separately for screen analysis. Model names are configurable and not hardcoded by the application. The default server is `http://127.0.0.1:11434`; only loopback HTTP URLs are accepted. The local server must not be configured to forward prompts to paid cloud models if fully local operation is desired. API reference: [Ollama chat](https://docs.ollama.com/api/chat).
@@ -49,13 +51,13 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r voice\requirements.txt
 ```
 
-Set the Python executable's absolute path in Settings → Voice. Enable microphone access, then use Push to Talk (click to start, click again to stop; 20-second maximum) or Ctrl+Shift+Space. Whisper model files download on first transcription and can be reused offline thereafter. Use `tiny` or `base` on slower machines. Wake phrase detection is opt-in and transcribes 5-second chunks, so it is less responsive than a dedicated wake-word engine. Saying only the wake phrase arms the next 20 seconds for a follow-up command. STT retains a warm model in a private Python process after the first transcription to reduce repeated loading. Responses use a local Windows voice, selectable at the bottom of Settings.
+Set the Python executable's absolute path in Settings → Voice. Enable microphone access, then use Push to Talk (click to start, click again to stop; 20-second maximum) or Ctrl+Shift+Space. Whisper model files download on first transcription and can be reused offline thereafter. Use `tiny` or `base` on slower machines. Wake phrase detection is opt-in and transcribes 5-second chunks, so it is less responsive than a dedicated wake-word engine. Saying only the wake phrase arms the next 20 seconds for a follow-up command. STT retains a warm model in a private Python process after the first transcription to reduce repeated loading. Choose Kokoro British voices, Piper, or Windows voices in Settings. The configured speech models are already downloaded. Automatic pause detection is enabled; recognition expects English.
 
 ## Vision and browser workflow
 
 Vision → Analyze Screen captures the selected monitor and sends a bounded-size JPEG to your local vision model. Modes: off, manual, awake, continuous. Continuous inference has a configurable minimum interval and skips unchanged frames using image hashing and downsampled differences. Frames are never saved permanently. Locate Element returns advisory physical desktop coordinates and confidence; verify them against the captured image.
 
-Browser tools operate through your normal browser and physical mouse/keyboard. You can ask to open Gmail, analyze the visible screen, draft text and request a click. Each click, keystroke, clipboard operation and typed message requires exact-action approval. Sending mail or submitting forms therefore always requires approval. JARVIS hides before input so the previous application can receive it. The planner returns tool outputs to the model and can iteratively observe, locate elements, propose actions and re-observe, up to a hard limit of 12 tools. Reliability depends on the selected model and screen layout.
+Browser tools operate through your normal browser and physical mouse/keyboard. You can ask to open Gmail, analyze the visible screen, draft text and request a click. Browser searches, verified search fields and ordinary navigation run automatically. Other clicks, general typing, Enter hotkeys and clipboard operations require approval. Sending mail or submitting forms therefore always requires approval. JARVIS hides before input so the previous application can receive it. The planner returns tool outputs to the model and can iteratively observe, locate elements, propose actions and re-observe, up to a hard limit of 12 tools. Reliability depends on the selected model and screen layout.
 
 ## Safety and memory
 
@@ -76,7 +78,7 @@ The installer creates a normal Start menu entry and optional desktop shortcut. T
 
 `pnpm test` covers configuration privacy defaults, fixed risk levels, mock execution, approvals, filesystem traversal, SQLite persistence, planner pause/resume, denial, invalid tools, unchanged vision frames, metadata-only logs and real telemetry. `pnpm build` verifies strict TypeScript and frontend bundling.
 
-Not included: OCR, foreground-window identity enforcement before actions, dedicated low-latency wake-word engine, streaming LLM output, guaranteed browser task completion, arbitrary application discovery, precise Windows master-volume API, automatic conversation summaries, software installation, elevated/admin commands or permanent deletion. Physical automation and devices must be tested by the user. GPU/VRAM readings depend on driver support. Model suggestions can be wrong; review plans and approval dialogs.
+Not included: OCR, foreground-window identity enforcement before actions, dedicated wake-word engine, guaranteed browser task completion, arbitrary application discovery, precise Windows master-volume API, automatic conversation summaries, software installation, elevated/admin commands or permanent deletion. Physical automation and devices must be tested by the user. GPU/VRAM readings depend on driver support. Model suggestions can be wrong; review plans and approval dialogs.
 
 ## Repository protection
 

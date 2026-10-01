@@ -17,8 +17,13 @@ export type Config = {
   ptt: string;
   sttModel: string;
   sttModelPath: string;
-  ttsEngine: 'windows' | 'piper';
+  sttLanguage: 'en' | 'auto';
+  autoStopSpeech: boolean;
+  ttsEngine: 'windows' | 'piper' | 'kokoro';
   piperVoicePath: string;
+  kokoroModelPath: string;
+  kokoroVoicesPath: string;
+  kokoroVoice: 'bm_george' | 'bm_daniel' | 'bm_lewis' | 'bm_fable';
   pythonPath: string;
   tts: boolean;
   speechSpeed: number;

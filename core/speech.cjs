@@ -1,4 +1,4 @@
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
 class SpeechWorker {
   constructor(config, script) {
     this.config = config;
@@ -7,10 +7,22 @@ class SpeechWorker {
     this.pending = null;
     this.buffer = '';
     this.executable = '';
+    this.prepared = null;
   }
   stop() {
-    this.child?.kill();
+    if (this.child) {
+      const child = this.child;
+      if (process.platform === 'win32' && child.pid && child.exitCode === null)
+        execFile(
+          'taskkill.exe',
+          ['/PID', String(child.pid), '/T', '/F'],
+          { windowsHide: true },
+          () => {},
+        );
+      else child.kill();
+    }
     this.child = null;
+    this.prepared = null;
     if (this.pending) {
       clearTimeout(this.pending.timer);
       this.pending.reject(Error('Speech worker stopped.'));
@@ -57,19 +69,29 @@ class SpeechWorker {
       if (this.child === child) this.stop();
     });
   }
-  transcribe(audio) {
-    if (this.pending) return Promise.reject(Error('Speech recognition is busy.'));
+  request(payload) {
+    if (this.pending) return Promise.reject(Error('Local voice worker is still processing.'));
     this.start();
     return new Promise((resolve, reject) => {
       this.pending = { resolve, reject, timer: setTimeout(() => this.stop(), 180000) };
-      this.child.stdin.write(
-        JSON.stringify({
-          audio,
-          model: this.config().sttModel,
-          modelPath: this.config().sttModelPath,
-        }) + '\n',
-      );
+      this.child.stdin.write(JSON.stringify(payload) + '\n');
     });
+  }
+  settings() {
+    const c = this.config();
+    return { model: c.sttModel, modelPath: c.sttModelPath, language: c.sttLanguage };
+  }
+  prepare(payload = this.settings()) {
+    if (!this.prepared) this.prepared = this.request({ ...payload, operation: 'prepare' });
+    return this.prepared;
+  }
+  async transcribe(audio) {
+    if (this.prepared) await this.prepared;
+    return this.request({ audio, ...this.settings() });
+  }
+  async synthesize(text, payload) {
+    if (this.prepared) await this.prepared;
+    return this.request({ text, ...payload });
   }
 }
 module.exports = { SpeechWorker };

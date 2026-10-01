@@ -28,7 +28,7 @@ async function pull(model) {
     }
   }
 }
-Promise.all(['qwen3:8b', 'gemma3:4b'].map(pull)).catch((error) => {
+Promise.all(['qwen3.5:9b'].map(pull)).catch((error) => {
   console.error(error.message);
   process.exitCode = 1;
 });

@@ -26,6 +26,17 @@ const { Planner } = require('../core/planner.cjs');
 const { Vision } = require('../core/vision.cjs');
 const { SpeechWorker } = require('../core/speech.cjs');
 let speech;
+let speaker;
+function voiceSettings() {
+  return {
+    engine: config.ttsEngine,
+    model: config.kokoroModelPath,
+    voices: config.kokoroVoicesPath,
+    voice: config.ttsEngine === 'kokoro' ? config.kokoroVoice : config.piperVoicePath,
+    speed: config.speechSpeed,
+    volume: config.speechVolume,
+  };
+}
 let win,
   tray,
   quitting = false,
@@ -74,7 +85,22 @@ function loadConfig() {
   return dir;
 }
 function saveConfig(next) {
+  const changedSpeech =
+    config &&
+    ['pythonPath', 'sttModelPath', 'sttModel', 'sttLanguage'].some((k) => config[k] !== next[k]);
+  const changedVoice =
+    config &&
+    [
+      'pythonPath',
+      'ttsEngine',
+      'kokoroModelPath',
+      'kokoroVoicesPath',
+      'kokoroVoice',
+      'piperVoicePath',
+    ].some((k) => config[k] !== next[k]);
   config = schema.parse(next);
+  if (changedSpeech || !config.microphone) speech?.stop();
+  if (changedVoice || !config.tts) speaker?.stop();
   fs.writeFileSync(configFile + '.tmp', JSON.stringify(config, null, 2));
   fs.renameSync(configFile + '.tmp', configFile);
   app.setLoginItemSettings({
@@ -93,11 +119,15 @@ function saveConfig(next) {
   )
     emit('reply', 'Push-to-talk shortcut could not be registered.');
   emit('config', config);
+  if (config.microphone) void speech?.prepare().catch(() => {});
+  if (config.tts && config.ttsEngine !== 'windows')
+    void speaker?.prepare(voiceSettings()).catch(() => {});
   return config;
 }
 function emergencyStop() {
   planner?.cancel();
   speech?.stop();
+  speaker?.stop();
   emit('stop', true);
 }
 async function capture(monitor, width) {
@@ -229,20 +259,9 @@ function handlers() {
   handle('logs', () => audit.items);
   handle('tasks', () => store.tasks());
   handle('synthesize', async (text) => {
-    if (!config.tts || config.ttsEngine !== 'piper') throw Error('Piper output is not enabled.');
-    if (!config.piperVoicePath || !fs.existsSync(config.piperVoicePath))
-      throw Error('Piper voice file is unavailable.');
-    return pythonCall(
-      config,
-      path.join(workerRoot(), 'synthesize.py'),
-      {
-        text: z.string().min(1).max(2000).parse(text),
-        voice: config.piperVoicePath,
-        speed: config.speechSpeed,
-        volume: config.speechVolume,
-      },
-      60000,
-    );
+    if (!config.tts || config.ttsEngine === 'windows')
+      throw Error('Local neural voice output is not enabled.');
+    return speaker.synthesize(z.string().min(1).max(2000).parse(text), voiceSettings());
   });
   handle('transcribe', async (audio) => {
     if (!config.microphone) throw Error('Microphone privacy is disabled.');
@@ -306,6 +325,7 @@ function handlers() {
 async function init() {
   const dir = loadConfig();
   speech = new SpeechWorker(() => config, path.join(workerRoot(), 'speech_worker.py'));
+  speaker = new SpeechWorker(() => config, path.join(workerRoot(), 'synthesize.py'));
   audit = new Audit(dir);
   store = await new Store().init(dir);
   ollama = new Ollama(() => config);
@@ -329,7 +349,18 @@ async function init() {
         emit('vision', result);
         return result;
       },
-      locate: (label) => vision.locate(label),
+      locate: async (label) => {
+        win.hide();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        try {
+          return await pythonCall(config, path.join(workerRoot(), 'automation.py'), {
+            tool: 'locate_accessible_element',
+            args: { label },
+          });
+        } catch {
+          return vision.locate(label);
+        }
+      },
       remember: (category, content) => {
         const result = store.remember(category, content);
         emit('memories', result);
@@ -392,6 +423,7 @@ async function init() {
   );
   tray.on('double-click', () => win.show());
   saveConfig(config);
+  void ollama.warm().catch(() => {});
   const sample = async () => {
     if (statsBusy) return;
     statsBusy = true;
@@ -442,6 +474,7 @@ else {
   app.on('before-quit', () => {
     quitting = true;
     speech?.stop();
+    speaker?.stop();
     clearInterval(timer);
     clearInterval(visionTimer);
     globalShortcut.unregisterAll();

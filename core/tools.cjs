@@ -2,9 +2,84 @@ const { z } = require('zod');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { searchUrl, findRobloxGames, chooseGame } = require('./web-actions.cjs');
 const text = z.string().min(1).max(8000),
   coord = z.number().int().min(-20000).max(20000);
 const definitions = {
+  search_web: {
+    risk: 1,
+    permission: 'browser',
+    schema: z
+      .object({
+        site: z.enum(['youtube', 'google', 'roblox']),
+        query: z.string().trim().min(1).max(500),
+      })
+      .strict(),
+    description:
+      'Search YouTube, Google or Roblox directly in the browser. Automatic, no typing or search-bar clicks needed. Prefer for all web searches.',
+  },
+  find_roblox_games: {
+    risk: 0,
+    permission: 'browser',
+    schema: z.object({ query: z.string().trim().min(1).max(200) }).strict(),
+    description:
+      'Look up real Roblox games by name. Returns verified place IDs and creators; do not invent IDs.',
+  },
+  play_roblox_game: {
+    risk: 1,
+    permission: 'browser',
+    schema: z.object({ query: z.string().trim().min(1).max(200) }).strict(),
+    description:
+      'Find and launch a named Roblox game; returns choices if ambiguous. Use this instead of opening Roblox again. Ask which game if no name was given.',
+  },
+  launch_roblox_game: {
+    risk: 1,
+    permission: 'browser',
+    schema: z
+      .object({ placeId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) })
+      .strict(),
+    description:
+      'Launch a Roblox place ID returned by find_roblox_games. Only known IDs may be launched.',
+  },
+  list_ui_elements: {
+    risk: 0,
+    schema: z.object({}).strict(),
+    description:
+      'Read real accessible controls in the foreground application. Prefer this before slow screen vision and before clicking or typing.',
+  },
+  fill_search: {
+    risk: 1,
+    permission: 'keyboard',
+    schema: z
+      .object({
+        text: z.string().min(1).max(500),
+        label: z.string().min(1).max(100).default('Search'),
+      })
+      .strict(),
+    description:
+      'Focus and fill a verified accessible Search edit field automatically; reads back its value to verify. Does not submit forms or send messages. Prefer search_web for browser searches.',
+  },
+  navigate_ui: {
+    risk: 1,
+    permission: 'mouse',
+    schema: z
+      .object({
+        label: z.enum([
+          'Search',
+          'Home',
+          'Back',
+          'Forward',
+          'Library',
+          'Explore',
+          'Subscriptions',
+          'Games',
+          'Videos',
+        ]),
+      })
+      .strict(),
+    description:
+      'Click a uniquely identified ordinary navigation control automatically. Only these exact safe navigation labels are allowed. Other buttons use click_mouse with confirmation.',
+  },
   close_application: {
     risk: 2,
     permission: 'keyboard',
@@ -85,7 +160,7 @@ const definitions = {
     description: 'Click an exact screen coordinate; always requires confirmation',
   },
   scroll: {
-    risk: 2,
+    risk: 1,
     permission: 'mouse',
     schema: z.object({ amount: z.number().int().min(-20).max(20) }).strict(),
     description: 'Scroll foreground window',
@@ -93,8 +168,9 @@ const definitions = {
   type_text: {
     risk: 2,
     permission: 'keyboard',
-    schema: z.object({ text }).strict(),
-    description: 'Type literal text in the foreground window; requires confirmation',
+    schema: z.object({ text, label: z.string().min(1).max(200).optional() }).strict(),
+    description:
+      'Focus a real accessible edit field by label, or use the already-focused edit field, and insert text with read-back verification. Requires confirmation for general fields. Never type before identifying the destination.',
   },
   hotkey: {
     risk: 2,
@@ -228,7 +304,7 @@ function validate(action) {
   return {
     tool: action.tool,
     args: d.schema.parse(action.args),
-    risk: d.risk,
+    risk: action.tool === 'window_control' && action.args?.action !== 'close' ? 1 : d.risk,
     permission: d.permission,
   };
 }
@@ -335,6 +411,7 @@ function pythonCall(config, script, payload, timeout = 30000) {
 class Executor {
   constructor({ config, host, worker, audit }) {
     Object.assign(this, { config, host, worker, audit });
+    this.games = new Map();
   }
   async execute(action) {
     const a = validate(action),
@@ -352,11 +429,59 @@ class Executor {
         'read_clipboard',
         'remember_memory',
         'get_foreground_window',
+        'list_ui_elements',
+        'find_roblox_games',
       ].includes(a.tool)
     )
       return { mock: true, message: `Simulated ${a.tool}; no PC input or file changes.` };
     const p = a.args;
     switch (a.tool) {
+      case 'search_web': {
+        const url = searchUrl(p.site, p.query);
+        await this.host.openUrl(url);
+        return {
+          dispatched: true,
+          site: p.site,
+          query: p.query,
+          url,
+          message: `Opened ${p.site} search results for ${p.query}.`,
+        };
+      }
+      case 'find_roblox_games':
+      case 'play_roblox_game': {
+        const matches = await findRobloxGames(p.query);
+        matches.forEach((game) => this.games.set(game.placeId, game));
+        if (a.tool === 'find_roblox_games') return { games: matches };
+        const selected = chooseGame(p.query, matches);
+        if (!selected)
+          return {
+            games: matches,
+            needsChoice: true,
+            message: matches.length
+              ? `Which game? ${matches.map((g, i) => `${i + 1}. ${g.name} by ${g.creator || 'unknown creator'}`).join('; ')}`
+              : `I couldn't find ${p.query} on Roblox. What is its exact name?`,
+          };
+        await pythonCall(c, this.worker, {
+          tool: 'launch_roblox_game',
+          args: { placeId: selected.placeId },
+        });
+        return {
+          dispatched: true,
+          game: selected,
+          message: `Asked Roblox to launch ${selected.name}. Joining has not been verified.`,
+        };
+      }
+      case 'launch_roblox_game': {
+        const game = this.games.get(p.placeId);
+        if (!game)
+          throw Error('Look up that Roblox game first; unverified place IDs cannot be launched.');
+        await pythonCall(c, this.worker, { tool: a.tool, args: p });
+        return {
+          dispatched: true,
+          game,
+          message: `Asked Roblox to launch ${game.name}. Joining has not been verified.`,
+        };
+      }
       case 'analyze_screen': {
         const result = await this.host.analyze();
         return {
@@ -431,9 +556,17 @@ class Executor {
         return { success: true };
       default:
         if (
-          ['move_mouse', 'click_mouse', 'scroll', 'type_text', 'hotkey', 'window_control'].includes(
-            a.tool,
-          )
+          [
+            'move_mouse',
+            'click_mouse',
+            'scroll',
+            'type_text',
+            'fill_search',
+            'navigate_ui',
+            'list_ui_elements',
+            'hotkey',
+            'window_control',
+          ].includes(a.tool)
         )
           await this.host.prepareInput?.();
         return pythonCall(c, this.worker, { ...a });

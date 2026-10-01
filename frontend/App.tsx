@@ -107,6 +107,7 @@ export function App() {
     [voiceName, setVoiceName] = useState(''),
     [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const nextId = useRef(1),
+    partialReply = useRef<number | null>(null),
     commandBusy = useRef(false),
     feed = useRef<HTMLDivElement | null>(null),
     configRef = useRef(config),
@@ -130,7 +131,7 @@ export function App() {
       const generation = ++speechGeneration.current;
       outputAudio.current?.pause();
       speechSynthesis.cancel();
-      if (c.ttsEngine === 'piper' && window.jarvis) {
+      if (c.ttsEngine !== 'windows' && window.jarvis) {
         setState('SPEAKING');
         void unwrap(window.jarvis.synthesize(text.slice(0, 2000)))
           .then((result) => {
@@ -140,7 +141,7 @@ export function App() {
             audio.onended = () => setState((s) => (s === 'SPEAKING' ? 'IDLE' : s));
             audio.onerror = () => {
               setState('ERROR');
-              report('Piper audio playback failed.');
+              report('Local voice playback failed.');
             };
             return audio.play();
           })
@@ -248,9 +249,45 @@ export function App() {
           setState(e.data as string);
           break;
         case 'reply':
-          report(e.data as string, 'JARVIS');
+          if (partialReply.current === null) report(e.data as string, 'JARVIS');
+          else {
+            const id = partialReply.current;
+            setMessages((m) =>
+              m.map((message) =>
+                message.id === id ? { ...message, text: e.data as string } : message,
+              ),
+            );
+            partialReply.current = null;
+          }
           speechRef.current(e.data as string);
           break;
+        case 'reply-chunk': {
+          if (partialReply.current === null) {
+            const id = nextId.current++;
+            partialReply.current = id;
+            setMessages((m) =>
+              [
+                ...m,
+                {
+                  id,
+                  role: 'JARVIS',
+                  text: e.data as string,
+                  time: new Date().toLocaleTimeString(),
+                },
+              ].slice(-200),
+            );
+          } else {
+            const id = partialReply.current;
+            setMessages((m) =>
+              m.map((message) =>
+                message.id === id
+                  ? { ...message, text: message.text + (e.data as string) }
+                  : message,
+              ),
+            );
+          }
+          break;
+        }
         case 'task': {
           const t = e.data as Task;
           setTasks((ts) => [t, ...ts.filter((x) => x.id !== t.id)]);
@@ -272,6 +309,7 @@ export function App() {
           voiceRef.current.toggle();
           break;
         case 'stop':
+          partialReply.current = null;
           voiceRef.current.cancel();
           speechGeneration.current++;
           outputAudio.current?.pause();
@@ -314,6 +352,7 @@ export function App() {
     }
   };
   const stop = async () => {
+    partialReply.current = null;
     voice.cancel();
     speechGeneration.current++;
     outputAudio.current?.pause();

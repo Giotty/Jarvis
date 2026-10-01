@@ -65,7 +65,12 @@ export function useVoice(
     const token = generation.current;
     try {
       stream.current = await navigator.mediaDevices.getUserMedia({
-        audio: c.microphoneId ? { deviceId: { exact: c.microphoneId } } : true,
+        audio: {
+          ...(c.microphoneId ? { deviceId: { exact: c.microphoneId } } : {}),
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
       if (token !== generation.current || !current.current?.microphone) {
         release();
@@ -80,12 +85,40 @@ export function useVoice(
       analyzer.fftSize = 256;
       source.connect(analyzer);
       const data = new Uint8Array(analyzer.frequencyBinCount);
+      const samples = new Float32Array(analyzer.fftSize);
+      const began = performance.now();
+      let previous = began,
+        lastSound = began,
+        speechMs = 0,
+        heardSpeech = false,
+        noise = 0.003;
       const sample = () => {
+        if (recorder.current?.state === 'inactive') return;
         analyzer.getByteFrequencyData(data);
         setLevel(data.reduce((s, v) => s + v, 0) / data.length / 255);
+        analyzer.getFloatTimeDomainData(samples);
+        const rms = Math.sqrt(
+          samples.reduce((sum, value) => sum + value * value, 0) / samples.length,
+        );
+        const now = performance.now();
+        if (!heardSpeech && rms < 0.012) noise = noise * 0.98 + rms * 0.02;
+        if (rms > Math.max(0.009, noise * 2.8)) {
+          speechMs += Math.min(50, now - previous);
+          lastSound = now;
+          if (speechMs > 160) heardSpeech = true;
+        } else if (!heardSpeech) speechMs = Math.max(0, speechMs - (now - previous));
+        previous = now;
+        if (
+          current.current?.autoStopSpeech &&
+          heardSpeech &&
+          now - lastSound > 1100 &&
+          now - began > 1400
+        ) {
+          stop();
+          return;
+        }
         raf.current = requestAnimationFrame(sample);
       };
-      sample();
       const chunks: BlobPart[] = [];
       const r = new MediaRecorder(stream.current);
       recorder.current = r;
@@ -135,6 +168,7 @@ export function useVoice(
         }
       };
       r.start();
+      sample();
       setListening(true);
       state.current('LISTENING');
       stopTimer.current = setTimeout(stop, enabled.current ? 5000 : 20000);

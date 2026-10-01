@@ -115,7 +115,21 @@ export function Settings({ config, models, save, refresh }: Props) {
             )}
             {input('pythonPath', 'Python executable path')}
             {input('sttModelPath', 'Downloaded Whisper model folder')}
-            {select('ttsEngine', 'Local speech engine', ['piper', 'windows'])}
+            {select('ttsEngine', 'Local speech engine', ['kokoro', 'piper', 'windows'])}
+            {select('sttLanguage', 'Speech language', ['en', 'auto'])}
+            {toggle('autoStopSpeech', 'Finish recording when you stop speaking')}
+            {draft.ttsEngine === 'kokoro' && (
+              <>
+                {select('kokoroVoice', 'British voice', [
+                  'bm_george',
+                  'bm_daniel',
+                  'bm_lewis',
+                  'bm_fable',
+                ])}
+                {input('kokoroModelPath', 'Kokoro model path')}
+                {input('kokoroVoicesPath', 'Kokoro voices path')}
+              </>
+            )}
             {input('piperVoicePath', 'Piper voice ONNX path')}
             {select('sttModel', 'Local Whisper model', [
               'tiny',
@@ -210,11 +224,12 @@ export function Settings({ config, models, save, refresh }: Props) {
                 <b>00 / SAFE</b> System readings and responses.
               </p>
               <p>
-                <b>01 / NORMAL</b> Allowlisted app launch and navigation.
+                <b>01 / NORMAL</b> App launch, browser searches, game launch and verified
+                search-field input run automatically.
               </p>
               <p>
-                <b>02 / IMPORTANT</b> Exact-action approval for clicks, keystrokes, clipboard, file
-                moves, and form submission.
+                <b>02 / IMPORTANT</b> Approval for other clicks, keystrokes, clipboard, file moves,
+                and form submission.
               </p>
               <p>
                 <b>03 / CRITICAL</b> Explicit approval for deletion and restricted PowerShell.

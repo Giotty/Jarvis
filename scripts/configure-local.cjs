@@ -15,16 +15,23 @@ const config = schema.parse({
   setupComplete: true,
   mock: false,
   ollamaUrl: 'http://127.0.0.1:11434',
-  model: 'qwen3:8b',
-  visionModel: 'gemma3:4b',
-  context: 4096,
+  model: 'qwen3.5:9b',
+  visionModel: 'qwen3.5:9b',
+  context: 8192,
+  temperature: 0.25,
   microphone: true,
   wakeEnabled: false,
-  sttModel: 'small',
-  sttModelPath: path.join(root, 'models', 'whisper-small'),
+  sttModel: 'distil-large-v3',
+  sttModelPath: path.join(root, 'models', 'whisper-distil-large-v3'),
+  sttLanguage: 'en',
+  autoStopSpeech: true,
   pythonPath: path.join(root, '.venv', 'Scripts', 'python.exe'),
   tts: true,
-  ttsEngine: 'piper',
+  ttsEngine: 'kokoro',
+  kokoroModelPath: path.join(root, 'models', 'kokoro', 'onnx', 'model.onnx'),
+  kokoroVoicesPath: path.join(root, 'models', 'kokoro', 'british-voices.bin'),
+  kokoroVoice: 'bm_george',
+  speechSpeed: 1.02,
   piperVoicePath: path.join(root, 'models', 'piper', 'en_US-lessac-medium.onnx'),
   mouse: true,
   keyboard: true,
@@ -36,4 +43,6 @@ const config = schema.parse({
   captureScope: 'screen',
 });
 fs.writeFileSync(file, JSON.stringify(config, null, 2));
-console.log('JARVIS local configuration saved. Safety remains mandatory.');
+console.log(
+  'JARVIS local configuration saved: British Kokoro voice, distilled Whisper, Qwen 3.5 for chat and vision. Destructive-action confirmations remain enabled.',
+);

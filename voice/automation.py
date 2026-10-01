@@ -25,6 +25,25 @@ def roblox_executable():
 def execute(tool, args):
     if sys.platform != 'win32':
         raise RuntimeError('PC control requires Windows.')
+    if tool == 'list_ui_elements':
+        from accessibility import describe
+        return describe()
+    if tool == 'locate_accessible_element':
+        from accessibility import locate
+        return locate(args['label'])
+    if tool in ['type_text', 'fill_search']:
+        from accessibility import fill
+        return fill(args['text'], args.get('label'), search=tool == 'fill_search')
+    if tool == 'navigate_ui':
+        from accessibility import navigate
+        return navigate(args['label'])
+    if tool == 'launch_roblox_game':
+        place_id = args['placeId']
+        if not isinstance(place_id, int) or place_id <= 0:
+            raise RuntimeError('Invalid Roblox place ID.')
+        roblox_executable()  # Refuse to trigger an uninstalled protocol's installer.
+        os.startfile('roblox://placeId=' + str(place_id))
+        return {'dispatched': True, 'joined': False}
     if tool == 'get_foreground_window':
         from ctypes import wintypes
         ctypes.windll.user32.GetForegroundWindow.restype = wintypes.HWND
@@ -73,13 +92,6 @@ def execute(tool, args):
         if args['button'] == 'double': pg.doubleClick()
         else: pg.click(button=args['button'])
     elif tool == 'scroll': pg.scroll(args['amount'])
-    elif tool == 'type_text':
-        # Unicode typing uses the clipboard and restores it after Windows pastes.
-        import pyperclip, time
-        previous = pyperclip.paste()
-        try:
-            pyperclip.copy(args['text']); pg.hotkey('ctrl', 'v'); time.sleep(.3)
-        finally: pyperclip.copy(previous)
     elif tool == 'hotkey': pg.hotkey(*args['keys'])
     elif tool == 'media': pg.press(args['key'])
     elif tool == 'window_control':
