@@ -1,5 +1,26 @@
 """Narrow Windows worker. Structured JSON only; never executes arbitrary commands."""
 import sys, json, subprocess, os, ctypes
+from pathlib import Path
+
+def roblox_executable():
+    # Prefer the installed protocol's current client, never the installer.
+    import winreg
+    root = Path(os.environ['LOCALAPPDATA']) / 'Roblox' / 'Versions'
+    candidates = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Classes\roblox\shell\open\command') as key:
+            command = winreg.QueryValueEx(key, None)[0]
+            if command.startswith('"'):
+                candidates.append(Path(command.split('"')[1]))
+    except OSError:
+        pass
+    if root.is_dir():
+        candidates.extend(sorted(root.glob('version-*/RobloxPlayerBeta.exe'), key=lambda p: p.stat().st_mtime, reverse=True))
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.name == 'RobloxPlayerBeta.exe' and root.resolve() in resolved.parents and resolved.is_file():
+            return str(resolved)
+    raise RuntimeError('Roblox is not installed. Install it yourself, then try again.')
 
 def execute(tool, args):
     if sys.platform != 'win32':
@@ -23,6 +44,10 @@ def execute(tool, args):
         return {'success': True, 'requested_close': len(windows)}
     if tool == 'open_application':
         name = args['name']
+        if name == 'roblox':
+            # Roblox's installed client uses --app for its home screen.
+            process = subprocess.Popen([roblox_executable(), '--app'])
+            return {'success': True, 'pid': process.pid}
         apps = {'notepad': ['notepad.exe'], 'calculator': ['calc.exe'], 'explorer': ['explorer.exe'],
                 'spotify': [os.path.join(os.environ['APPDATA'], 'Spotify', 'Spotify.exe')],
                 'chrome': [os.path.join(os.environ['PROGRAMFILES'], 'Google', 'Chrome', 'Application', 'chrome.exe')],

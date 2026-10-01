@@ -8,7 +8,8 @@ export function useVoice(
 ) {
   const armedUntil = useRef(0);
   const generation = useRef(0),
-    starting = useRef(false);
+    starting = useRef(false),
+    processing = useRef(false);
   const recorder = useRef<MediaRecorder | null>(null),
     stream = useRef<MediaStream | null>(null),
     stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
@@ -19,6 +20,7 @@ export function useVoice(
     log = useRef(report),
     state = useRef(setState);
   const [listening, setListening] = useState(false),
+    [transcribing, setTranscribing] = useState(false),
     [level, setLevel] = useState(0),
     [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const audio = useRef<AudioContext | null>(null),
@@ -36,7 +38,11 @@ export function useVoice(
     setLevel(0);
   }, []);
   const stop = useCallback(() => {
-    if (recorder.current?.state === 'recording') recorder.current.stop();
+    if (recorder.current?.state === 'recording') {
+      processing.current = true;
+      setTranscribing(true);
+      recorder.current.stop();
+    }
     if (stopTimer.current) clearTimeout(stopTimer.current);
   }, []);
   const cancel = useCallback(() => {
@@ -49,11 +55,12 @@ export function useVoice(
   }, [stop]);
   const start = useCallback(async () => {
     const c = current.current;
+    if (!c) return;
     if (!c?.microphone || !window.jarvis) {
       log.current('Enable microphone privacy in Settings first.');
       return;
     }
-    if (recorder.current?.state === 'recording' || starting.current) return;
+    if (recorder.current?.state === 'recording' || starting.current || processing.current) return;
     starting.current = true;
     const token = generation.current;
     try {
@@ -84,10 +91,13 @@ export function useVoice(
       recorder.current = r;
       r.ondataavailable = (e) => chunks.push(e.data);
       r.onstop = async () => {
+        processing.current = true;
         release();
         setListening(false);
-        if (token !== generation.current || !current.current?.microphone) return;
         try {
+          if (token !== generation.current || !current.current?.microphone) return;
+          setTranscribing(true);
+          state.current('TRANSCRIBING');
           const blob = new Blob(chunks, { type: r.mimeType });
           const bytes = new Uint8Array(await blob.arrayBuffer());
           let binary = '';
@@ -113,9 +123,13 @@ export function useVoice(
             } else send.current(text);
           }
         } catch (e) {
-          log.current(String(e));
-          enabled.current = false;
+          if (token === generation.current) {
+            log.current(String(e));
+            enabled.current = false;
+          }
         } finally {
+          processing.current = false;
+          setTranscribing(false);
           if (enabled.current && token === generation.current)
             repeatTimer.current = setTimeout(() => void start(), 1500);
         }
@@ -155,6 +169,7 @@ export function useVoice(
   );
   return {
     listening,
+    transcribing,
     level,
     devices,
     start,

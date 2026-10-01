@@ -29,6 +29,7 @@ class SpeechWorker {
     this.child = child;
     this.buffer = '';
     child.stdout.on('data', (data) => {
+      if (this.child !== child) return;
       this.buffer += data;
       const newline = this.buffer.indexOf('\n');
       if (newline < 0) return;
@@ -46,8 +47,12 @@ class SpeechWorker {
       }
     });
     child.stderr.on('data', () => {});
-    child.stdin.on('error', () => this.stop());
-    child.on('error', () => this.stop());
+    child.stdin.on('error', () => {
+      if (this.child === child) this.stop();
+    });
+    child.on('error', () => {
+      if (this.child === child) this.stop();
+    });
     child.on('exit', () => {
       if (this.child === child) this.stop();
     });

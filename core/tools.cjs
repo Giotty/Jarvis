@@ -51,7 +51,9 @@ const definitions = {
     risk: 1,
     permission: 'browser',
     schema: z
-      .object({ name: z.enum(['notepad', 'calculator', 'explorer', 'spotify', 'chrome', 'edge']) })
+      .object({
+        name: z.enum(['notepad', 'calculator', 'explorer', 'spotify', 'chrome', 'edge', 'roblox']),
+      })
       .strict(),
     description: 'Open an allowlisted installed application',
   },

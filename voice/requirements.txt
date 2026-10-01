@@ -1,4 +1,6 @@
 faster-whisper>=1.2,<2
+# PyAV 19 removed metadata_errors, still used by faster-whisper 1.2.
+av==18.1.0
 pyautogui>=0.9.54,<1
 pyperclip>=1.9,<2
 piper-tts>=1.8,<2

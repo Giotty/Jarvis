@@ -15,6 +15,8 @@ class Planner {
     this.cancelled = false;
     this.busy = false;
     this.messages = [];
+    this.controller = null;
+    this.directApp = null;
   }
   save() {
     this.store.task(this.active);
@@ -25,6 +27,8 @@ class Planner {
       throw Error('Finish or cancel the current task first.');
     this.busy = true;
     this.cancelled = false;
+    this.controller = new AbortController();
+    this.directApp = null;
     this.safety.resume();
     this.emit('state', 'THINKING');
     try {
@@ -38,7 +42,28 @@ class Planner {
         },
         { role: 'user', content: text },
       ];
-      const reply = await this.ollama.chat(this.messages, toolSchemas());
+      // Exact app-launch requests use the same validated executor and safety policy,
+      // but do not need to wait for a model or ask it to guess an application.
+      const match = text
+        .trim()
+        .match(
+          /^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(roblox|notepad|calculator|file explorer|explorer|spotify|google chrome|chrome|microsoft edge|edge)(?:\s+app)?(?:\s+please)?[.!]?$/i,
+        );
+      const aliases = {
+        'file explorer': 'explorer',
+        'google chrome': 'chrome',
+        'microsoft edge': 'edge',
+      };
+      if (match) this.directApp = aliases[match[1].toLowerCase()] || match[1].toLowerCase();
+      const reply = this.directApp
+        ? {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              { function: { name: 'open_application', arguments: { name: this.directApp } } },
+            ],
+          }
+        : await this.ollama.chat(this.messages, toolSchemas(), false, this.controller.signal);
       if (this.cancelled) return;
       const calls = reply.tool_calls || [];
       if (!calls.length) {
@@ -57,6 +82,7 @@ class Planner {
       this.add(reply);
       await this.run();
     } catch (e) {
+      if (this.cancelled) return;
       this.fail(e);
       throw e;
     } finally {
@@ -95,10 +121,26 @@ class Planner {
       if (!(await this.perform(step))) return;
     }
     if (this.cancelled) return;
+    if (this.directApp) {
+      this.active.status = 'completed';
+      this.active.finished = Date.now();
+      this.save();
+      const simulated = this.active.steps[0].result?.mock;
+      this.emit(
+        'reply',
+        simulated
+          ? `Simulated opening ${this.directApp}; no application was launched.`
+          : `Opened ${this.directApp}.`,
+      );
+      this.emit('state', 'IDLE');
+      return;
+    }
     this.emit('state', 'THINKING');
     const reply = await this.ollama.chat(
       this.messages,
       this.active.steps.length < 12 ? toolSchemas() : undefined,
+      false,
+      this.controller.signal,
     );
     if (this.cancelled) return;
     if (reply.tool_calls?.length) {
@@ -125,6 +167,7 @@ class Planner {
       this.audit.write('tool-result', { tool: step.tool, status: 'done' });
       return true;
     } catch (e) {
+      if (this.cancelled) return false;
       step.status = 'failed';
       step.error = e.message;
       this.fail(e);
@@ -158,6 +201,7 @@ class Planner {
     try {
       if (await this.perform(step)) await this.run();
     } catch (e) {
+      if (this.cancelled) return;
       this.fail(e);
       throw e;
     } finally {
@@ -166,6 +210,7 @@ class Planner {
   }
   cancel() {
     this.cancelled = true;
+    this.controller?.abort();
     this.safety.stop();
     if (this.active && ['waiting', 'running'].includes(this.active.status)) {
       this.active.status = 'cancelled';

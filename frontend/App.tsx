@@ -107,6 +107,7 @@ export function App() {
     [voiceName, setVoiceName] = useState(''),
     [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const nextId = useRef(1),
+    commandBusy = useRef(false),
     feed = useRef<HTMLDivElement | null>(null),
     configRef = useRef(config),
     commandRef = useRef<(text: string) => void>(() => {});
@@ -177,6 +178,11 @@ export function App() {
         return;
       }
       if (!text.trim()) return;
+      if (commandBusy.current) {
+        report('JARVIS is finishing the current task. Press STOP to cancel it.');
+        return;
+      }
+      commandBusy.current = true;
       setBusy(true);
       report(text, 'USER');
       setHistory((h) => [text, ...h].slice(0, 100));
@@ -187,6 +193,7 @@ export function App() {
         report(String(e));
         setState('ERROR');
       } finally {
+        commandBusy.current = false;
         setBusy(false);
       }
     },
@@ -475,8 +482,16 @@ export function App() {
                     : 'Connect Ollama to activate local intelligence.'}
               </p>
               <div className="core-actions">
-                <button onClick={voice.toggle} className={voice.listening ? 'primary' : ''}>
-                  {voice.listening ? '■ STOP LISTENING' : '◉ PUSH TO TALK'}
+                <button
+                  disabled={!config || !config.microphone || voice.transcribing || busy}
+                  onClick={voice.toggle}
+                  className={voice.listening ? 'primary' : ''}
+                >
+                  {voice.transcribing
+                    ? 'TRANSCRIBING…'
+                    : voice.listening
+                      ? '■ STOP LISTENING'
+                      : '◉ PUSH TO TALK'}
                 </button>
                 <button
                   onClick={() => {
@@ -958,7 +973,12 @@ export function App() {
                 }
               }}
             />
-            <button type="button" onClick={voice.toggle} aria-label="Toggle microphone">
+            <button
+              type="button"
+              disabled={!config || !config.microphone || voice.transcribing || busy}
+              onClick={voice.toggle}
+              aria-label="Toggle microphone"
+            >
               {voice.listening ? '■' : '◉'}
             </button>
             <button className="primary" disabled={busy || !input.trim()} type="submit">
