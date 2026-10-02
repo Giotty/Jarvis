@@ -2,7 +2,7 @@ const { z } = require('zod');
 const schema = z
   .object({
     setupComplete: z.boolean().default(false),
-    mock: z.boolean().default(true),
+    mock: z.boolean().default(false),
     provider: z.enum(['ollama', 'openai', 'anthropic']).default('ollama'),
     fallbackProvider: z.enum(['none', 'ollama', 'openai', 'anthropic']).default('ollama'),
     cloudEnabled: z.boolean().default(false),

@@ -251,7 +251,11 @@ export function Settings({ config, save }: Props) {
         )}
         {section === 'PERMISSIONS' && (
           <>
-            {toggle('mock', 'Mock mode', 'All PC input and file mutations are simulated.')}
+            {toggle(
+              'mock',
+              'Simulation mode',
+              'When enabled, apps do not open and PC input and file changes are simulated.',
+            )}
             {toggle('mouse', 'Allow mouse control')}
             {toggle('keyboard', 'Allow keyboard control')}
             {toggle('browser', 'Allow app and browser launch')}
@@ -418,8 +422,8 @@ export function Setup({
         <span className="eyebrow">INITIALIZATION PROTOCOL / 01</span>
         <h1 id="setup-title">Welcome to JARVIS.</h1>
         <p>
-          Your assistant runs locally. Begin with mock automation and enable each capability when
-          you’re ready.
+          Your assistant runs locally. Enable the capabilities you need in Settings. Approved
+          actions use your actual computer; destructive actions still require confirmation.
         </p>
         <div className="setup-checks">
           {[

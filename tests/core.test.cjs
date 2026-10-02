@@ -13,7 +13,7 @@ const { Audit } = require('../core/log.cjs');
 const { telemetry } = require('../core/telemetry.cjs');
 test('configuration defaults preserve privacy and rejects remote AI endpoints', () => {
   const c = defaults();
-  assert.equal(c.mock, true);
+  assert.equal(c.mock, false);
   assert.equal(c.microphone, false);
   assert.equal(c.mouse, false);
   assert.throws(() => schema.parse({ ...c, ollamaUrl: 'https://example.com' }));
@@ -48,7 +48,7 @@ test('approval is immutable, single-use, expiring and cancelled by stop', () => 
 });
 test('mock executor does not launch apps and permissions still apply', async () => {
   let launches = 0;
-  let c = { ...defaults(), browser: true };
+  let c = { ...defaults(), browser: true, mock: true };
   const ex = new Executor({
     config: () => c,
     audit: { write() {} },
@@ -63,6 +63,40 @@ test('mock executor does not launch apps and permissions still apply', async () 
     ex.execute({ tool: 'open_url', args: { url: 'https://example.com' } }),
     /disabled/,
   );
+});
+test('switching simulation off launches arbitrary installed applications through the shared route', async () => {
+  let config = { ...defaults(), browser: true, mock: true };
+  const opened = [];
+  const ex = new Executor({
+    config: () => config,
+    audit: { write() {} },
+    worker: 'unused',
+    host: {
+      openSystem: async (uri) => opened.push(uri),
+      verifyApplication: async (name, result) => ({ ...result, verified: true, application: name }),
+    },
+  });
+  ex.apps.cached = Promise.resolve([
+    { Name: 'Future Photo Studio', AppID: 'PhotoStudio_123!App' },
+    { Name: 'Future Music Editor', AppID: 'MusicEditor_456!App' },
+  ]);
+  ex.apps.expires = Date.now() + 60000;
+  assert.equal(
+    (await ex.execute({ tool: 'open_application', args: { name: 'Future Photo Studio' } })).mock,
+    true,
+  );
+  assert.deepEqual(opened, []);
+  config = { ...config, mock: false };
+  for (const name of ['Future Photo Studio', 'Future Music Editor']) {
+    const result = await ex.execute({ tool: 'open_application', args: { name } });
+    assert.equal(result.mock, undefined);
+    assert.equal(result.verified, true);
+    assert.equal(result.application, name);
+  }
+  assert.deepEqual(opened, [
+    'shell:AppsFolder\\PhotoStudio_123!App',
+    'shell:AppsFolder\\MusicEditor_456!App',
+  ]);
 });
 test('file roots reject traversal and root deletion', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jarvis-test-'));
@@ -200,7 +234,7 @@ test('telemetry returns real readings without requiring all sensors', async () =
 });
 test('mock mode also prevents risk-zero media key input', async () => {
   const ex = new Executor({
-    config: () => ({ ...defaults(), keyboard: true }),
+    config: () => ({ ...defaults(), keyboard: true, mock: true }),
     audit: { write() {} },
     worker: 'never-run',
     host: {},

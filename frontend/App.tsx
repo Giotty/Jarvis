@@ -605,6 +605,14 @@ export function App() {
             data is presented as live.
           </div>
         )}
+        {window.jarvis && config?.mock && (
+          <div className="preview-banner" role="alert">
+            SIMULATION IS ON — apps will not open and PC actions will not happen.{' '}
+            <button onClick={() => void save({ ...config, mock: false })}>
+              ENABLE REAL CONTROL
+            </button>
+          </div>
+        )}
         <section className="context-strip" aria-label="Live assistant context">
           <span>
             SCREEN CONTEXT{' '}

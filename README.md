@@ -1,5 +1,7 @@
 # JARVIS
 
+Version 0.2.2 uses real control by default. Simulation is an optional setting: when enabled, a warning explains that no apps open and no PC actions happen, with an **ENABLE REAL CONTROL** button. Capability permissions and destructive-action confirmations still apply. Installed applications use the shared Windows discovery and launch tools rather than command-specific app handlers.
+
 Version 0.2.1 adds verified Windows master volume control and generic label-based navigation across applications. Named buttons, tabs and menu items use accessibility first, with native activation patterns and guarded mouse/vision fallback. Tool schemas retain their full instructions, parameter descriptions, bounds and defaults. This reduces unnecessary screenshots and model rounds without adding phrase-specific command handlers. Full-drive file access is available through `fileAccess: computer` and remains subject to Windows account permissions; risky actions still require approval.
 
 JARVIS now uses one general model-driven agent for voice and typed requests. OpenAI, Claude and Ollama share a provider interface; tools come from enabled built-in plugins and optional MCP servers. The model discovers capabilities, combines them, observes results and recovers within configured limits. The desktop does not match each user phrase to a bespoke action handler. Existing legacy routing modules remain for regression coverage but are not the desktop agent entry point.

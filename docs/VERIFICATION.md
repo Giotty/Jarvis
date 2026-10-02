@@ -1,5 +1,13 @@
 # Verification
 
+## Real application launches — 0.2.2
+
+- Simulation is off in the saved profile and the packaged app's live IPC snapshot. Default configuration now uses real control; simulation remains an explicit optional setting with a prominent warning and an enable-real-control button. Capability permissions and consequential-action approval remain enabled.
+- Windows Start menu discovery returned 147 installed applications. The common discovery/launch route is retained for arbitrary installed names, with registered desktop paths and Store app identities supported.
+- The packaged app received `Open Steam` and `Open Calculator` through its production command IPC. Both tasks completed, reported their applications open, and recorded real `running` tool executions rather than mock executions. Runtime voice settings remained Kokoro / `bm_george`.
+- 17 focused JavaScript tests passed, including simulated launches, switching the same executor to real control for two arbitrary future application names, permission gates and destructive-action approvals. ESLint, TypeScript and Vite build passed. Packaging verified all 60 application files and produced Windows version 0.2.2.
+- This does not guarantee launch success for removed/broken installations or automatable controls in every app. No exhaustive application launch sweep was performed. The temporary local debugging endpoint was removed by restarting JARVIS normally after the checks.
+
 ## General desktop controls — 0.2.1
 
 - JavaScript: 115 passed, 0 failed. Python: 21 passed, including endpoint volume, native control activation, stale runtime identities, meaningful schema constraints, duplicate targets, preparation deadlines, parent-context failures and bounded recovery.
