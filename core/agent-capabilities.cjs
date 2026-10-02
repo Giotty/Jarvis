@@ -20,6 +20,11 @@ const base = [
   'search_web',
   'extract_page_text',
   'get_system_stats',
+  'get_audio_state',
+  'set_volume',
+  'media',
+  'open_settings',
+  'list_ui_elements',
 ];
 const families = {
   files: [
@@ -63,7 +68,15 @@ const families = {
     'launch_roblox_game',
   ],
   memory: ['remember_memory'],
-  system: ['list_running_apps', 'media', 'read_clipboard', 'write_clipboard', 'open_settings'],
+  system: [
+    'list_running_apps',
+    'get_audio_state',
+    'set_volume',
+    'media',
+    'read_clipboard',
+    'write_clipboard',
+    'open_settings',
+  ],
   browser: ['open_youtube_result', 'fill_search'],
   screen: ['list_ui_elements', 'locate_ui_element', 'read_visible_text'],
 };

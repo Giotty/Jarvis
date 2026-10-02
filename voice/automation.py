@@ -113,6 +113,12 @@ def execute(tool, args):
         return {'dispatched': True, 'joined': False}
     if tool == 'get_foreground_window':
         return foreground()
+    if tool == 'get_audio_state':
+        from audio_control import state
+        return {'success': True, 'verified': True, 'observed_result': state()}
+    if tool == 'set_volume':
+        from audio_control import control
+        return control(args)
     if tool == 'close_application':
         import pygetwindow
         windows = [w for w in pygetwindow.getWindowsWithTitle(args['name']) if w.title and 'JARVIS' not in w.title.upper()]
@@ -162,6 +168,15 @@ def execute(tool, args):
         after = foreground()
         if int(hit or 0) != current['hwnd'] or any(after.get(k) != current.get(k) for k in identity):
             raise RuntimeError('The target is covered or its window changed; no click was performed.')
+        if args.get('control'):
+            from accessibility import activate_observed
+            activation = activate_observed(args['control'], args['window'])
+            if activation is not None: return activation
+        if any(foreground().get(k) != current.get(k) for k in identity):
+            raise RuntimeError('The target window changed; no click was performed.')
+        hit = user.GetAncestor(user.WindowFromPoint(wintypes.POINT(args['x'], args['y'])), 2)
+        if int(hit or 0) != current['hwnd']:
+            raise RuntimeError('The target became covered; no click was performed.')
         pg.click()
         return {'dispatched': True, 'verified_target': True, 'page_change_verified': False}
     if tool == 'move_mouse': pg.moveTo(args['x'], args['y'], duration=.2)
@@ -174,7 +189,11 @@ def execute(tool, args):
         pg.moveTo(args['x'],args['y'],duration=.2)
         pg.dragTo(args['toX'],args['toY'],duration=.4,button='left')
     elif tool == 'hotkey': pg.hotkey(*args['keys'])
-    elif tool == 'media': pg.press(args['key'])
+    elif tool == 'media':
+        if args['key'] in ['volumeup', 'volumedown', 'volumemute']:
+            from audio_control import control
+            return control({'action': {'volumeup':'raise', 'volumedown':'lower', 'volumemute':'toggle_mute'}[args['key']], 'percent': 2})
+        pg.press(args['key'])
     elif tool == 'window_control':
         actions = {'close': ['alt', 'f4'], 'minimize': ['win', 'down'], 'maximize': ['win', 'up'], 'switch': ['alt', 'tab']}
         pg.hotkey(*actions[args['action']])

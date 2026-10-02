@@ -1,5 +1,7 @@
 # General agent update
 
+0.2.1 follow-up: full local drive access and existing Windows permissions are retained. Volume now uses a real Windows audio endpoint with read-back verification. Generic navigation supports arbitrary observed labels, menus, tabs, custom/text controls, duplicate resolution and native activation patterns; vision is a fallback. Complete tool schemas prevent silently lost parameter constraints. Target preparation has a deadline, and three unresolved failures stop a task before a prolonged retry loop. Current built-ins expose 63 tools. See the latest verification section for live checks and limitations.
+
 Only Giotty/Jarvis was modified. Existing HUD, local speech, screen capture, automation, telemetry, memory and installer were retained. Cloud processing remains disabled and no paid requests were made.
 
 1. **Provider architecture:** `core/providers/` exposes a common chat/stream interface, canonical tool calls, capabilities and usage. The rest of the agent does not use provider-specific request formats.

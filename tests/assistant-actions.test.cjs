@@ -86,7 +86,7 @@ test('dangerous actions retain confirmation; automatic typing cannot become a me
   );
   assert.equal(validate({ tool: 'hotkey', args: { keys: ['enter'] } }).risk, 2);
   assert.equal(validate({ tool: 'delete_file', args: { path: 'x' } }).risk, 3);
-  assert.throws(() => validate({ tool: 'navigate_ui', args: { label: 'Send' } }));
+  assert.equal(validate({ tool: 'navigate_ui', args: { label: 'Send' } }).risk, 2);
   const ex = new Executor({
     config: () => ({ browser: true, mock: false }),
     host: {},

@@ -61,6 +61,8 @@ const categories = {
     'get_system_stats',
     'list_running_apps',
     'media',
+    'get_audio_state',
+    'set_volume',
     'lock_pc',
     'read_clipboard',
     'write_clipboard',
@@ -103,6 +105,7 @@ function builtins(executor, store, emit) {
             d.risk === 0 &&
             [
               'get_system_stats',
+              'get_audio_state',
               'list_running_apps',
               'web_search',
               'find_video',
@@ -122,7 +125,7 @@ function builtins(executor, store, emit) {
                   : undefined,
           validate: (args) => validate({ tool: name, args }),
           execute: (action, signal) => executor.executeResult(action, signal),
-          prepare: ['click_control', 'click_visible_target'].includes(name)
+          prepare: ['click_control', 'click_visible_target', 'navigate_ui'].includes(name)
             ? (action, signal, goal) => executor.prepare(action, signal, goal)
             : undefined,
         };

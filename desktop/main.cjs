@@ -38,6 +38,7 @@ const { publicError } = require('../core/agent-errors.cjs');
 const { readConfiguration, writeConfiguration } = require('../core/configuration.cjs');
 const { ordinaryNavigation } = require('../core/navigation-safety.cjs');
 const { resolveOrdinal } = require('../core/ordinal-controls.cjs');
+const { findControl } = require('../core/control-matching.cjs');
 let prepareDesktop;
 const withTarget = targetWindow(
   () => win,
@@ -523,21 +524,10 @@ async function init() {
       let located;
       let elements = [];
       try {
-        elements = (await nativeCall('list_ui_elements')).elements;
+        elements = (await nativeCall('list_ui_elements', {}, signal)).elements;
       } catch {}
-      const matches = elements.filter((e) => e.label.toLowerCase() === label.toLowerCase());
-      const clickable = matches.filter((e) =>
-        [
-          'ButtonControl',
-          'HyperlinkControl',
-          'TabItemControl',
-          'ListItemControl',
-          'MenuItemControl',
-        ].includes(e.kind),
-      );
-      const exact = clickable.length ? clickable : matches;
-      if (exact.length === 1)
-        located = { ...exact[0], confidence: 1, source: 'Windows UI Automation' };
+      const exact = findControl(label, elements);
+      if (exact) located = exact;
       else located = await vision.locate(label, frame, signal, elements);
       publishFrame(frame, `Located ${located.label || label} for your requested click.`);
       return located;
@@ -628,7 +618,13 @@ async function init() {
     audit,
     host: {
       native: (tool, args, signal) =>
-        ['application_inventory', 'list_installed_games'].includes(tool)
+        [
+          'application_inventory',
+          'list_installed_games',
+          'get_audio_state',
+          'set_volume',
+          'media',
+        ].includes(tool)
           ? nativeCall(tool, args, signal)
           : withTarget(() => nativeCall(tool, args, signal)),
       browser,

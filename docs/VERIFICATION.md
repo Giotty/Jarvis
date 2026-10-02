@@ -1,5 +1,17 @@
 # Verification
 
+## General desktop controls — 0.2.1
+
+- JavaScript: 115 passed, 0 failed. Python: 21 passed, including endpoint volume, native control activation, stale runtime identities, meaningful schema constraints, duplicate targets, preparation deadlines, parent-context failures and bounded recovery.
+- ESLint, strict TypeScript and Vite production build passed.
+- Actual Windows test window: a Collections tab was selected using SelectionItemPattern; a LIBRARY menu was activated using InvokePattern. Both effects were independently verified. These target operations took about three seconds each, excluding model generation. The disposable window was closed afterward.
+- Actual Windows default audio endpoint: a one-point change was read back, and the previous volume/mute state was restored. The real Ollama general agent then selected `set_volume` with the requested explicit amount, verified it and replied naturally in about four seconds; its test change was also restored.
+- Full local drive access, filesystem, mouse, keyboard, browser and Windows command permissions were already enabled in the owner's configuration and are retained. Windows account/UAC restrictions and consequential approvals remain.
+- Steam was not open during the final physical checks. Those checks used a disposable native Windows window; verify Steam's current Library control manually. Controls not exposed by accessibility continue to use image-based fallback and can remain slower or uncertain.
+- Windows installer 0.2.1 built successfully and 60 packaged application files matched the frozen source. The packaged runtime passed IPC, AudioWorklet, encrypted credentials and provider/plugin UI checks (10 plugins / 63 tools). No paid APIs, destructive user-file operations, account changes or security-setting changes were performed.
+
+References used for implementation: [Microsoft control patterns](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-controlpatternsoverview), [pycaw endpoint volume](https://github.com/AndreMiras/pycaw/blob/develop/examples/audio_endpoint_volume_example.py), [Zod 3 JSON Schema conversion](https://github.com/StefanTerdell/zod-to-json-schema).
+
 ## General agent/provider update — 0.2.0
 
 - Final JavaScript suite: 106 passed, 0 failed, covering old automation safeguards and the new providers, general agent, private-data routing, dynamic plugins, MCP protocol, retries, immutable approvals, expiry, cancellation and action verification. Cloud providers were exercised with mocks, not paid requests. Local-first preference and escalation after tools or a local outage are covered.

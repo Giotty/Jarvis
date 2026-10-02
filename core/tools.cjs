@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { zodToJsonSchema } = require('zod-to-json-schema');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -266,25 +267,15 @@ const definitions = {
       'Focus and fill a verified accessible Search edit field automatically; reads back its value to verify. Does not submit forms or send messages. Prefer search_web for browser searches.',
   },
   navigate_ui: {
-    risk: 1,
+    risk: 2,
     permission: 'mouse',
     schema: z
       .object({
-        label: z.enum([
-          'Search',
-          'Home',
-          'Back',
-          'Forward',
-          'Library',
-          'Explore',
-          'Subscriptions',
-          'Games',
-          'Videos',
-        ]),
+        label: z.string().trim().min(1).max(200),
       })
       .strict(),
     description:
-      'Click a uniquely identified ordinary navigation control automatically. Only these exact safe navigation labels are allowed. Other buttons use click_mouse with confirmation.',
+      'Activate a visible control by its concise label, in any application. The host resolves accessibility first, then visual fallback, and verifies the result. Use this directly for named buttons, tabs and menus; screen capture is only needed for ambiguous or visual targets. Ordinary navigation runs automatically; consequential controls require approval.',
   },
   close_application: {
     risk: 2,
@@ -445,6 +436,29 @@ const definitions = {
       .strict(),
     description: 'Send media or volume key',
   },
+  get_audio_state: {
+    risk: 0,
+    schema: z.object({}).strict(),
+    description: 'Read the actual Windows master playback volume (0–100 percent) and mute state.',
+  },
+  set_volume: {
+    risk: 1,
+    permission: 'keyboard',
+    schema: z
+      .object({
+        action: z.enum(['set', 'lower', 'raise', 'mute', 'unmute', 'toggle_mute']),
+        percent: z
+          .number()
+          .min(0)
+          .max(100)
+          .describe(
+            'Required explicit percentage from 0 to 100. For set: final volume; for lower/raise: change in percentage points (1 means one point, not 10). Choose 10 only when no amount was requested. Use 0 for mute/unmute/toggle_mute.',
+          ),
+      })
+      .strict(),
+    description:
+      'Control Windows master playback volume and verify its actual value. Always provide percent: final level for set, percentage-point change for lower/raise. Use the requested amount exactly; choose 10 only when unspecified. Muting is explicit; changing volume preserves mute state.',
+  },
   lock_pc: {
     risk: 2,
     permission: 'keyboard',
@@ -547,35 +561,16 @@ function toolSchemas(names) {
   return Object.entries(definitions)
     .filter(([name]) => !names || names.includes(name))
     .map(([name, d]) => {
-      const shape = d.schema.shape;
-      const properties = {};
-      for (const [k, s] of Object.entries(shape)) {
-        let inner = s;
-        while (inner._def.innerType) inner = inner._def.innerType;
-        properties[k] =
-          inner instanceof z.ZodEnum
-            ? { type: 'string', enum: inner.options }
-            : inner instanceof z.ZodNumber
-              ? { type: 'number' }
-              : inner instanceof z.ZodBoolean
-                ? { type: 'boolean' }
-                : inner instanceof z.ZodArray
-                  ? { type: 'array', items: { type: 'string' } }
-                  : { type: 'string' };
-      }
+      const { $schema: _meta, ...parameters } = zodToJsonSchema(d.schema, {
+        $refStrategy: 'none',
+        effectStrategy: 'input',
+      });
       return {
         type: 'function',
         function: {
           name,
-          description: d.description.slice(0, 180),
-          parameters: {
-            type: 'object',
-            properties,
-            required: Object.entries(shape)
-              .filter(([, s]) => !s.isOptional())
-              .map(([k]) => k),
-            additionalProperties: false,
-          },
+          description: d.description,
+          parameters,
         },
       };
     });
@@ -687,12 +682,12 @@ class Executor {
   }
   async prepare(action, signal, selectorGoal) {
     const a = validate(action);
-    if (!['click_visible_target', 'click_control'].includes(a.tool)) return;
+    if (!['click_visible_target', 'click_control', 'navigate_ui'].includes(a.tool)) return;
     if (!this.config().mouse) throw Error('mouse control is disabled.');
     if (this.config().mock) return;
     return a.tool === 'click_control'
       ? this.host.prepareControl(a.args.id, signal, selectorGoal)
-      : this.host.prepareTarget(selectorGoal || a.args.label, signal);
+      : this.host.prepareTarget(a.args.label, signal);
   }
   async executeResult(action, signal) {
     const { result, failure } = require('./agent-errors.cjs');
@@ -843,6 +838,7 @@ class Executor {
       }
       case 'click_control':
       case 'click_visible_target':
+      case 'navigate_ui':
         if (!action.target) throw Error('Observe and approve the visible target first.');
         return this.host.clickTarget(action.target, signal);
       case 'list_installed_apps':
@@ -1031,7 +1027,6 @@ class Executor {
             'scroll',
             'type_text',
             'fill_search',
-            'navigate_ui',
             'list_ui_elements',
             'hotkey',
             'window_control',

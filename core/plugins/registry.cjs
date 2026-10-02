@@ -177,7 +177,19 @@ class PluginRegistry {
   async prepare(action, signal, goal) {
     const { tool } = this.find(action.tool);
     if (tool.prepare) {
-      action.target = await tool.prepare(action, signal, goal);
+      const timeout = AbortSignal.timeout(this.config().toolTimeout || 30000);
+      const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      let abort;
+      const interrupted = new Promise((_, reject) => {
+        abort = () => reject(Error('Target preparation timed out or cancelled.'));
+        combined.addEventListener('abort', abort, { once: true });
+      });
+      try {
+        combined.throwIfAborted();
+        action.target = await Promise.race([tool.prepare(action, combined, goal), interrupted]);
+      } finally {
+        combined.removeEventListener('abort', abort);
+      }
       if (action.target?.automaticNavigation === true) {
         this.certifiedTargets.add(action.target);
         action.risk = 1;

@@ -39,7 +39,7 @@ class MCPConnection {
         requestInit: { headers: token ? { Authorization: 'Bearer ' + token } : {} },
       });
     }
-    this.client = new Client({ name: 'jarvis', version: '0.2.0' });
+    this.client = new Client({ name: 'jarvis', version: '0.2.1' });
     try {
       await this.client.connect(this.transport, { signal, timeout: 15000 });
       const tools = [];

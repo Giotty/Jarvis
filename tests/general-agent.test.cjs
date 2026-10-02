@@ -61,6 +61,50 @@ const answer = (content = 'Done.') => ({ role: 'assistant', content });
 let id = 0;
 const call = (name, args = {}) => ({ id: 'call-' + ++id, function: { name, arguments: args } });
 const action = (...tool_calls) => ({ role: 'assistant', content: '', tool_calls });
+test('repeated failures with intervening reads stop promptly and leave the next command usable', async () => {
+  const s = setup();
+  s.executor.prepare = async () => ({ automaticNavigation: true });
+  s.executor.executeResult = async (a) => ({
+    success: a.tool === 'list_windows',
+    verified: a.tool === 'list_windows',
+    retryable: true,
+  });
+  s.replies.push(
+    action(call('navigate_ui', { label: 'Library' })),
+    action(call('list_windows')),
+    action(call('navigate_ui', { label: 'LIBRARY button' })),
+    action(call('list_windows')),
+    action(call('navigate_ui', { label: 'Library' })),
+    answer('This must not run'),
+  );
+  await s.agent.command('Click the named navigation control.');
+  assert.equal(s.agent.active.status, 'failed');
+  assert.equal(s.agent.active.steps.length, 5);
+  assert.equal(s.agent.busy, false);
+  s.replies.length = 0;
+  s.replies.push(answer('I am ready.'));
+  await s.agent.command('Are you still there?');
+  assert.equal(s.agent.active.status, 'completed');
+});
+test('target preparation has its own timeout and passes cancellation to the locator', async () => {
+  const s = setup();
+  s.config.toolTimeout = 15;
+  let locatorSignal;
+  s.executor.prepare = async (_a, signal) => {
+    locatorSignal = signal;
+    return new Promise(() => {});
+  };
+  const hold = setTimeout(() => {}, 100);
+  try {
+    await assert.rejects(
+      () => s.registry.prepare(s.registry.validate('navigate_ui', { label: 'Reports' })),
+      /timed out/,
+    );
+    assert.equal(locatorSignal.aborted, true);
+  } finally {
+    clearTimeout(hold);
+  }
+});
 test('local preference uses the first general inference, then primary planning after tools', async () => {
   const s = setup({ preferLocalSimple: true });
   const decisions = [];

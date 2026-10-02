@@ -1,5 +1,7 @@
 # JARVIS
 
+Version 0.2.1 adds verified Windows master volume control and generic label-based navigation across applications. Named buttons, tabs and menu items use accessibility first, with native activation patterns and guarded mouse/vision fallback. Tool schemas retain their full instructions, parameter descriptions, bounds and defaults. This reduces unnecessary screenshots and model rounds without adding phrase-specific command handlers. Full-drive file access is available through `fileAccess: computer` and remains subject to Windows account permissions; risky actions still require approval.
+
 JARVIS now uses one general model-driven agent for voice and typed requests. OpenAI, Claude and Ollama share a provider interface; tools come from enabled built-in plugins and optional MCP servers. The model discovers capabilities, combines them, observes results and recovers within configured limits. The desktop does not match each user phrase to a bespoke action handler. Existing legacy routing modules remain for regression coverage but are not the desktop agent entry point.
 
 Start with `Launch-JARVIS.cmd`. Open **Settings → AI Providers**, choose a primary and fallback provider, enter a model name or discover available names. Cloud inference is off by default. For OpenAI/Claude, save your key with **SAVE KEY SECURELY**, enable cloud AI, and save configuration. API keys are encrypted using Windows DPAPI through Electron safeStorage in the local profile, separate from ordinary configuration; keys are never returned through IPC. Cloud API access may incur provider charges. No cloud account/key was created or charged during development. See [the implementation report](docs/GENERAL_AGENT_REPORT.md) for setup, verification and limitations.
@@ -82,7 +84,7 @@ Memory is stored through the Memory page or intentional memory tools. The model 
 
 ```powershell
 pnpm portable   # release-final/win-unpacked/JARVIS.exe
-pnpm dist       # release-final/JARVIS Setup 0.2.0.exe
+pnpm dist       # release-final/JARVIS Setup 0.2.1.exe
 ```
 
 The installer creates a normal Start menu entry and optional desktop shortcut. The app has a generated original icon, a system tray menu, minimize-to-tray, and opt-in Windows startup. This release is unsigned; Windows may show a publisher warning. Python/STT/automation dependencies and Ollama models are not bundled in the installer. The HUD, system monitoring, SQLite memory and Windows TTS do not need Python.

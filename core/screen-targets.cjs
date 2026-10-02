@@ -79,19 +79,29 @@ class ScreenTargets {
       if (changed(target.fingerprint, this.fingerprint(frame, review)))
         throw Error('The target appearance changed. No click was performed; ask again.');
       signal?.throwIfAborted();
-      const result = await this.click({ x: review.x, y: review.y, window: target.window }, signal);
+      const result = await this.click(
+        { x: review.x, y: review.y, window: target.window, control: target.control },
+        signal,
+      );
       try {
         await new Promise((r) => setTimeout(r, 300));
         const afterWindow = await this.window();
-        const afterFrame = await this.capture(afterWindow);
+        const afterFrame = result.verified ? null : await this.capture(afterWindow);
         const visiblyChanged =
           !sameWindow(target.window, afterWindow) ||
-          changed(target.fingerprint, this.fingerprint(afterFrame, review));
+          result.verified === true ||
+          (frame.pixels && afterFrame?.pixels
+            ? changed(frame.pixels, afterFrame.pixels)
+            : changed(target.fingerprint, this.fingerprint(afterFrame, review)));
         return {
           ...result,
           success: true,
           verified: visiblyChanged,
-          observed_result: { window: afterWindow, screenChanged: visiblyChanged },
+          observed_result: {
+            window: afterWindow,
+            screenChanged: visiblyChanged,
+            activation: result.observed_result,
+          },
           message: visiblyChanged
             ? `Clicked ${review.label}.`
             : `I clicked ${review.label}, but couldn’t confirm the screen changed.`,

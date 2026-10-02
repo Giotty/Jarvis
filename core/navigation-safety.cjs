@@ -1,7 +1,8 @@
 // Only the host's observed UI control can make a click automatic. Model text
 // cannot change risk. Submission, destructive and privileged controls stay gated.
 function ordinaryNavigation(control, window) {
-  const label = control.label || '';
+  if (control.contextUnavailable) return false;
+  const label = [control.label, control.actionLabel].filter(Boolean).join(' ');
   if (
     ![
       'ButtonControl',
@@ -11,6 +12,10 @@ function ordinaryNavigation(control, window) {
       'MenuItemControl',
       'EditControl',
       'ComboBoxControl',
+      'TreeItemControl',
+      'SplitButtonControl',
+      'CustomControl',
+      'TextControl',
     ].includes(control.kind) ||
     !label.trim()
   )
@@ -22,7 +27,7 @@ function ordinaryNavigation(control, window) {
   )
     return false;
   if (
-    /\b(?:send|submit|post|publish|buy|purchase|pay|checkout|delete|remove|uninstall|install|shutdown|restart|reset|format|administrator|admin|security|password|permission|confirm|authorize|allow|login|log in|sign in|connecter|envoyer|supprimer|acheter|payer|installer|redémarrer|autoriser|confirmer)\b/i.test(
+    /\b(?:send|submit|post|publish|buy|purchase|pay|checkout|delete|erase|wipe|remove|uninstall|install|shutdown|restart|reset|format|administrator|admin|security|firewall|defender|antivirus|protection|bitlocker|uac|secure boot|password|permission|confirm|authorize|allow|login|log in|sign in|connecter|envoyer|supprimer|acheter|payer|installer|redémarrer|autoriser|confirmer)\b/i.test(
       label,
     )
   )

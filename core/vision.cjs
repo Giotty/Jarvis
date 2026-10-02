@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
-const { resolveOrdinal } = require('./ordinal-controls.cjs');
+const { resolveOrdinal, ordinal } = require('./ordinal-controls.cjs');
+const { findControl } = require('./control-matching.cjs');
 class Vision {
   constructor({ capture, ollama, config }) {
     Object.assign(this, { capture, ollama, config });
@@ -78,8 +79,11 @@ class Vision {
       x: Math.round(((p.x - frame.bounds.x) * frame.width) / frame.bounds.width),
       y: Math.round(((p.y - frame.bounds.y) * frame.height) / frame.bounds.height),
     }));
+    const exact = findControl(label, accessible);
+    if (exact) return { ...exact, monitor: frame.monitor };
     let selection;
     if (
+      ordinal(label) &&
       candidates.some((p) =>
         [
           'ButtonControl',

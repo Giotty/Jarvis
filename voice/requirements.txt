@@ -7,3 +7,4 @@ piper-tts>=1.8,<2
 pillow>=12,<13
 kokoro-onnx>=0.6.1,<1
 uiautomation>=2.0,<3
+pycaw==20260927

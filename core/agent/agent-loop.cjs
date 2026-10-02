@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { ContextManager } = require('./context-manager.cjs');
 const { safeResponse } = require('./response-generator.cjs');
 const { publicError, failure } = require('../agent-errors.cjs');
+const { actionSignature } = require('../control-matching.cjs');
 class AgentLoop {
   constructor({ ai, registry, safety, store, config, emit, audit, executor }) {
     Object.assign(this, { ai, registry, safety, store, config, emit, audit, executor });
@@ -89,6 +90,7 @@ class AgentLoop {
   async run() {
     const c = this.config(),
       attempts = new Map();
+    let unresolvedFailures = 0;
     for (let turn = 0; turn < c.agentMaxSteps; turn++) {
       this.controller.signal.throwIfAborted();
       this.emit('state', 'THINKING');
@@ -138,7 +140,7 @@ class AgentLoop {
           let args = call.function.arguments;
           if (typeof args === 'string') args = JSON.parse(args);
           action = this.registry.validate(call.function.name, args);
-          const key = action.tool + JSON.stringify(action.args),
+          const key = actionSignature(action.tool, action.args),
             old = this.active.steps.filter((s) => s.signature === key);
           if (
             (attempts.get(key) || 0) > c.agentRetries ||
@@ -208,6 +210,9 @@ class AgentLoop {
       }
       if (batch.some((s) => s.result.success === false) && !c.automaticRecovery)
         throw Error('Recovery disabled; step failed.');
+      if (batch.some((s) => s.result.success === false)) unresolvedFailures++;
+      else if (batch.some((s) => s.risk > 0 && s.result.verified)) unresolvedFailures = 0;
+      if (unresolvedFailures >= 3) throw Error('Repeated action failures without progress.');
       this.save();
       this.messages.push({
         role: 'user',
