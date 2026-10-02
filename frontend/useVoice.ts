@@ -35,6 +35,8 @@ export function useVoice(
     [transcribing, setTranscribing] = useState(false);
   const [level, setLevel] = useState(0),
     [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [status, setStatus] = useState('Microphone idle.');
+  const deviceSignature = useRef('');
   const release = useCallback(() => {
     if (node.current) {
       node.current.port.onmessage = null;
@@ -140,14 +142,38 @@ export function useVoice(
     let input: MediaStream | null = null,
       context: AudioContext | null = null;
     try {
-      input = await navigator.mediaDevices.getUserMedia({
+      const available = (await navigator.mediaDevices.enumerateDevices()).filter(
+        (d) => d.kind === 'audioinput',
+      );
+      setDevices(available);
+      const selected =
+        c.microphoneId && available.some((d) => d.deviceId === c.microphoneId)
+          ? c.microphoneId
+          : '';
+      if (c.microphoneId && !selected)
+        current.current.report('Selected microphone unavailable. Using the system default.');
+      const constraints = {
         audio: {
-          ...(c.microphoneId ? { deviceId: { exact: c.microphoneId } } : {}),
+          ...(selected ? { deviceId: { exact: selected } } : {}),
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
         },
-      });
+      };
+      try {
+        input = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (error) {
+        if (
+          selected &&
+          error instanceof DOMException &&
+          ['NotFoundError', 'OverconstrainedError'].includes(error.name)
+        ) {
+          current.current.report('Selected microphone disconnected. Trying the system default.');
+          input = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          });
+        } else throw error;
+      }
       if (token !== generation.current) {
         input.getTracks().forEach((t) => t.stop());
         return;
@@ -160,6 +186,16 @@ export function useVoice(
         return;
       }
       stream.current = input;
+      input.getAudioTracks().forEach((track) => {
+        track.onended = () => {
+          if (token !== generation.current) return;
+          generation.current++;
+          jobs.current = [];
+          release();
+          setStatus('Microphone disconnected. Reconnecting…');
+          if (autoWanted.current) void startRef.current();
+        };
+      });
       audio.current = context;
       const detector = new SpeechCapture(context.sampleRate);
       capture.current = detector;
@@ -212,17 +248,30 @@ export function useVoice(
         return;
       }
       setListening(true);
+      setStatus('Listening: ' + (input.getAudioTracks()[0]?.label || 'system default'));
       current.current.setState('LISTENING');
-      setDevices(
-        (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'),
+      const connected = (await navigator.mediaDevices.enumerateDevices()).filter(
+        (d) => d.kind === 'audioinput',
       );
+      deviceSignature.current = connected.map((d) => d.deviceId + ':' + d.label).join('|');
+      setDevices(connected);
     } catch (error) {
       input?.getTracks().forEach((t) => t.stop());
       if (context && context.state !== 'closed') void context.close();
       if (token === generation.current) {
         release();
-        autoWanted.current = false;
-        current.current.report(`Microphone unavailable: ${String(error)}`);
+        const denied = error instanceof DOMException && error.name === 'NotAllowedError';
+        autoWanted.current =
+          !denied &&
+          Boolean(
+            current.current.config?.microphone &&
+            (current.current.config.conversationMode || current.current.config.wakeEnabled),
+          );
+        const message = denied
+          ? 'Microphone permission is blocked. Enable it in Windows microphone privacy settings.'
+          : 'Microphone unavailable. Connect or select a microphone in Settings.';
+        setStatus(message);
+        current.current.report(message);
       }
     } finally {
       starting.current = false;
@@ -231,6 +280,38 @@ export function useVoice(
     }
   }, [enqueue, release, cancel]);
   startRef.current = start;
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const changed = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void navigator.mediaDevices
+          .enumerateDevices()
+          .then((all) => {
+            const microphones = all.filter((d) => d.kind === 'audioinput');
+            const signature = microphones.map((d) => d.deviceId + ':' + d.label).join('|');
+            setDevices(microphones);
+            if (signature === deviceSignature.current) return;
+            deviceSignature.current = signature;
+            if (!autoWanted.current) return;
+            generation.current++;
+            jobs.current = [];
+            release();
+            if (microphones.length) {
+              setStatus('Reconnecting microphone…');
+              void startRef.current();
+            } else setStatus('Microphone unavailable. Connect a microphone to resume.');
+          })
+          .catch(() => setStatus('Microphone unavailable.'));
+      }, 300);
+    };
+    changed();
+    navigator.mediaDevices.addEventListener('devicechange', changed);
+    return () => {
+      clearTimeout(timer);
+      navigator.mediaDevices.removeEventListener('devicechange', changed);
+    };
+  }, [release]);
   useEffect(() => {
     autoWanted.current = Boolean(
       config?.microphone && (config.conversationMode || config.wakeEnabled),
@@ -250,6 +331,7 @@ export function useVoice(
     transcribing,
     level,
     devices,
+    status,
     start,
     stop,
     cancel,

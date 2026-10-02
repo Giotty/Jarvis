@@ -14,6 +14,8 @@ class Audit {
       tool: details.tool,
       risk: details.risk,
       status: details.status,
+      // Diagnostics are opt-in to this method, never screenshot/page/chat text.
+      diagnostic: details.error ? String(details.error).slice(0, 2000) : undefined,
     };
     this.items.unshift(entry);
     this.items = this.items.slice(0, 300);

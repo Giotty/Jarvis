@@ -52,3 +52,26 @@ def launch(app_id, risk):
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, close_fds=True)
     return {'dispatched': True, 'pid': process.pid}
+
+
+def inventory():
+    import winreg
+    import os
+    found=[]
+    for hive in [winreg.HKEY_CURRENT_USER,winreg.HKEY_LOCAL_MACHINE]:
+        for view in [winreg.KEY_WOW64_64KEY,winreg.KEY_WOW64_32KEY]:
+            try:
+                with winreg.OpenKey(hive,r'Software\Microsoft\Windows\CurrentVersion\Uninstall',0,winreg.KEY_READ|view) as root:
+                    for index in range(min(winreg.QueryInfoKey(root)[0],1000)):
+                        try:
+                            with winreg.OpenKey(root,winreg.EnumKey(root,index)) as key:
+                                name=winreg.QueryValueEx(key,'DisplayName')[0]
+                                icon=os.path.expandvars(winreg.QueryValueEx(key,'DisplayIcon')[0])
+                                match=re.match(r'^"?(.+?\.exe)(?:"|,\d+)?$',icon,re.I)
+                                if name and match and Path(match[1]).is_file():
+                                    found.append({'Name':str(name),'AppID':str(Path(match[1]).resolve()),'source':'Windows installed application registration'})
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+    return {'applications':found[:500]}

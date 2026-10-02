@@ -52,6 +52,19 @@ const schema = z
     interval: z.number().int().min(10).max(300).default(30),
     imageQuality: z.number().int().min(400).max(1920).default(1280),
     frameThreshold: z.number().min(0).max(1).default(0.02),
+    screenSampleSeconds: z.number().int().min(2).max(30).default(3),
+    gamingMode: z.enum(['off', 'auto', 'on']).default('auto'),
+    gamingCommentary: z.enum(['off', 'important', 'normal', 'verbose']).default('important'),
+    proactive: z.enum(['off', 'low', 'normal']).default('low'),
+    appAliases: z.record(z.string().min(1).max(150)).default({}),
+    websiteAliases: z
+      .record(
+        z
+          .string()
+          .url()
+          .refine((v) => ['http:', 'https:'].includes(new URL(v).protocol)),
+      )
+      .default({ google: 'https://www.google.com/', youtube: 'https://www.youtube.com/' }),
     mouse: z.boolean().default(false),
     keyboard: z.boolean().default(false),
     browser: z.boolean().default(true),

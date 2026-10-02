@@ -36,6 +36,12 @@ export type Config = {
   interval: number;
   imageQuality: number;
   frameThreshold: number;
+  screenSampleSeconds: number;
+  gamingMode: 'off' | 'auto' | 'on';
+  gamingCommentary: 'off' | 'important' | 'normal' | 'verbose';
+  proactive: 'off' | 'low' | 'normal';
+  appAliases: Record<string, string>;
+  websiteAliases: Record<string, string>;
   mouse: boolean;
   keyboard: boolean;
   browser: boolean;
@@ -108,7 +114,30 @@ export type Diagnostics = {
   monitors: { id: string; width: number; height: number; scale: number }[];
   speakers: boolean;
 };
-export type Audit = { time: string; event: string; tool?: string; status?: string; risk?: number };
+export type ScreenState = {
+  active: boolean;
+  stale?: boolean;
+  updated: number;
+  summary: string;
+  gaming: boolean;
+  activeWindow: { title: string; application: string } | null;
+  monitor?: string;
+  lastAnalysis?: number;
+  elements: { id: string; label: string; kind: string }[];
+  events: { time: number; kind: string; text: string }[];
+};
+export type BrowserState = {
+  observedAt: number;
+  windows: { title: string; url: string; foreground: boolean }[];
+};
+export type Audit = {
+  time: string;
+  event: string;
+  tool?: string;
+  status?: string;
+  risk?: number;
+  diagnostic?: string;
+};
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 export type JarvisAPI = {
   snapshot: () => Promise<
@@ -119,10 +148,12 @@ export type JarvisAPI = {
       models: { online: boolean; models: string[] };
       tasks: Task[];
       memories: Memory[];
+      screenContext?: ScreenState;
     }>
   >;
   command: (text: string, turn?: string) => Promise<Result<void>>;
-  interrupt: () => Promise<Result<void>>;
+  interrupt: () => Promise<Result<{ taskContinues: boolean }>>;
+  cancelTask: () => Promise<Result<void>>;
   previewSpeech: (text: string, turn: string) => Promise<Result<{ started: boolean }>>;
   confirm: (id: string, yes: boolean) => Promise<Result<void>>;
   cancel: () => Promise<Result<void>>;

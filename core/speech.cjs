@@ -95,7 +95,7 @@ class SpeechWorker {
   }
   async transcribe(audio) {
     if (this.prepared) await this.prepared;
-    return this.request({ audio, ...this.settings() });
+    return this.request({ audio, ...this.settings(), hotwords: this.config().speechHints || '' });
   }
   async synthesize(text, payload) {
     // Barge-in discards playback, not this warmed model. Serialize requests

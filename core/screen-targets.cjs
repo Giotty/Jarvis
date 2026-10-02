@@ -29,12 +29,14 @@ class ScreenTargets {
     Object.assign(this, { withTarget, window, capture, locate, fingerprint, click });
     this.pending = new Map();
   }
-  async prepare(label, signal) {
+  async prepare(label, signal, known) {
     return this.withTarget(async () => {
       signal?.throwIfAborted();
       const window = await this.window();
+      if (known && !sameWindow(known.window, window))
+        throw Error('The foreground window changed. Observe again.');
       const frame = await this.capture(window);
-      const located = await this.locate(label, frame, signal);
+      const located = known?.control || (await this.locate(label, frame, signal));
       signal?.throwIfAborted();
       if (
         !sameWindow(window, await this.window()) ||
@@ -76,11 +78,32 @@ class ScreenTargets {
       if (changed(target.fingerprint, this.fingerprint(frame, review)))
         throw Error('The target appearance changed. No click was performed; ask again.');
       signal?.throwIfAborted();
-      const result = await this.click({ x: review.x, y: review.y, window: target.window });
-      return {
-        ...result,
-        message: `Clicked ${review.label} in ${review.windowTitle}. The resulting page has not been verified.`,
-      };
+      const result = await this.click({ x: review.x, y: review.y, window: target.window }, signal);
+      try {
+        await new Promise((r) => setTimeout(r, 300));
+        const afterWindow = await this.window();
+        const afterFrame = await this.capture(afterWindow);
+        const visiblyChanged =
+          !sameWindow(target.window, afterWindow) ||
+          changed(target.fingerprint, this.fingerprint(afterFrame, review));
+        return {
+          ...result,
+          success: true,
+          verified: visiblyChanged,
+          observed_result: { window: afterWindow, screenChanged: visiblyChanged },
+          message: visiblyChanged
+            ? `Clicked ${review.label}.`
+            : `I clicked ${review.label}, but couldn’t confirm the screen changed.`,
+        };
+      } catch {
+        return {
+          ...result,
+          success: true,
+          verified: false,
+          retryable: false,
+          message: `I clicked ${review.label}, but couldn’t check the resulting screen.`,
+        };
+      }
     });
   }
 }

@@ -31,13 +31,30 @@ const requiresAppApproval = (name) =>
   /\b(?:uninstall|uninstaller|install|installer|setup|reset|remove|shutdown|restart|désinstaller|désinstallation|installation|réinitialiser)\b/i.test(
     normalize(name),
   );
-function chooseApp(query, apps) {
+function chooseApp(query, apps, recent = '') {
   const name = normalize(query);
   const exact = apps.filter((app) => normalize(app.Name) === name);
   const matches = exact.length
     ? exact
     : apps.filter((app) => name.length >= 3 && normalize(app.Name).includes(name));
-  return { selected: matches.length === 1 ? matches[0] : null, matches };
+  if (matches.length) return { selected: matches.length === 1 ? matches[0] : null, matches };
+  const ranked = require('./app-matching.cjs').rankNames(
+    query,
+    apps.map((a) => a.Name),
+    recent,
+  );
+  const best = ranked[0];
+  const confident =
+    best && best.confidence >= 0.85 && best.confidence - (ranked[1]?.confidence || 0) >= 0.1;
+  return {
+    selected: confident ? apps.find((a) => a.Name === best.name) : null,
+    matches: confident
+      ? [apps.find((a) => a.Name === best.name)]
+      : ranked
+          .filter((r) => r.confidence >= 0.55)
+          .slice(0, 5)
+          .map((r) => apps.find((a) => a.Name === r.name)),
+  };
 }
 class WindowsApps {
   constructor() {
@@ -57,6 +74,18 @@ class WindowsApps {
             (a) => typeof a.Name === 'string' && typeof a.AppID === 'string',
           ),
         )
+        .then(async (items) => {
+          const extras = this.extra
+            ? await this.extra().catch(() => ({ applications: [] }))
+            : { applications: [] };
+          const seen = new Set(items.map((a) => normalize(a.Name)));
+          for (const app of extras.applications || [])
+            if (!seen.has(normalize(app.Name))) {
+              items.push(app);
+              seen.add(normalize(app.Name));
+            }
+          return items;
+        })
         .catch((error) => {
           this.cached = null;
           throw error;
@@ -97,16 +126,18 @@ class WindowsApps {
       approvedRisk < 3
     )
       throw Error('This app entry runs a script or installer and requires approval.');
+    let launched = {};
     if (/^(?:\{[0-9a-f-]{36}\}\\|[a-z]:[\\/])/i.test(selected.AppID)) {
       if (!launchRegistered) throw Error('Registered desktop launcher is unavailable.');
-      await launchRegistered(selected.AppID, approvedRisk);
+      launched = (await launchRegistered(selected.AppID, approvedRisk)) || {};
     } else {
       await openNamespace('shell:AppsFolder\\' + selected.AppID);
     }
     return {
+      ...launched,
       dispatched: true,
       application: selected.Name,
-      message: `Asked Windows to open ${selected.Name}.`,
+      message: `Opening ${selected.Name}.`,
     };
   }
 }
@@ -160,11 +191,21 @@ async function directory(config, input, offset = 0) {
   );
   return {
     path: folder,
-    entries: items.slice(offset, offset + 100).map((entry) => ({
-      name: entry.name,
-      path: path.join(folder, entry.name),
-      type: entry.isDirectory() ? 'folder' : entry.isSymbolicLink() ? 'link' : 'file',
-    })),
+    entries: await Promise.all(
+      items.slice(offset, offset + 100).map(async (entry) => ({
+        name: entry.name,
+        path: path.join(folder, entry.name),
+        type: entry.isDirectory() ? 'folder' : entry.isSymbolicLink() ? 'link' : 'file',
+        ...(await fs
+          .lstat(path.join(folder, entry.name))
+          .then((info) => ({
+            modified: info.mtime.toISOString(),
+            created: info.birthtime.toISOString(),
+            size: info.size,
+          }))
+          .catch(() => ({}))),
+      })),
+    ),
     nextOffset: offset + 100 < items.length ? offset + 100 : null,
   };
 }

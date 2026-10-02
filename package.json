@@ -17,6 +17,7 @@
     "portable": "pnpm build && node scripts/package.cjs --portable"
   },
   "dependencies": {
+    "cheerio": "1.1.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "sql.js": "^1.13.0",

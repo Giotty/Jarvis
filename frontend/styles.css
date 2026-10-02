@@ -1405,3 +1405,43 @@ input[type='checkbox'] {
     flex-wrap: wrap;
   }
 }
+.context-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  border: 1px solid #17394b;
+  background: #06141ee8;
+  color: #7094a4;
+  font-size: 10px;
+}
+.context-strip span {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.context-strip b {
+  color: #9fdceb;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.context-events {
+  max-height: 270px;
+  overflow: auto;
+}
+.context-events div {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 14px;
+  padding: 9px;
+  border-bottom: 1px solid #17394b;
+  font-size: 12px;
+}
+.context-events time {
+  color: #638594;
+}

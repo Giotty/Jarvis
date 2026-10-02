@@ -4,6 +4,7 @@ const methods = [
   'command',
   'confirm',
   'cancel',
+  'cancelTask',
   'interrupt',
   'previewSpeech',
   'settings',

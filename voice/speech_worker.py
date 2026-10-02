@@ -26,12 +26,12 @@ def load(path, preferred):
         device = 'cpu'
         return WhisperModel(path, device='cpu', compute_type='int8', cpu_threads=min(6, os.cpu_count() or 4))
 
-def recognize(audio, language, warm=False):
+def recognize(audio, language, warm=False, hints=''):
     segments, _ = model.transcribe(audio, language=None if language == 'auto' else 'en',
                                   beam_size=1, best_of=1, condition_on_previous_text=False,
                                   vad_filter=not warm, vad_parameters={'min_silence_duration_ms': 250},
                                   without_timestamps=True, max_new_tokens=1 if warm else 256,
-                                  hotwords=None if warm else 'Jarvis, Steam, Epic Games Launcher, Roblox, YouTube, MrBeast', temperature=0)
+                                  hotwords=None if warm else (hints[:300] or 'Jarvis, Steam, Epic Games Launcher, Roblox, YouTube, MrBeast'), temperature=0)
     return ' '.join(s.text for s in segments).strip()
 for line in sys.stdin:
     try:
@@ -50,7 +50,7 @@ for line in sys.stdin:
         import numpy as np
         decoded = np.zeros(16000, dtype=np.float32) if warm else io.BytesIO(base64.b64decode(request['audio']))
         try:
-            text = recognize(decoded, request.get('language', 'en'), warm)
+            text = recognize(decoded, request.get('language', 'en'), warm, request.get('hotwords',''))
         except RuntimeError:
             if preferred != 'auto' or device != 'cuda':
                 raise
@@ -59,7 +59,7 @@ for line in sys.stdin:
             model = load(model_path, 'cpu')
             if not warm:
                 decoded.seek(0)
-            text = recognize(decoded, request.get('language', 'en'), warm)
+            text = recognize(decoded, request.get('language', 'en'), warm, request.get('hotwords',''))
         if request.get('operation') == 'prepare':
             result = {'ready': True, 'device': device}
         else:

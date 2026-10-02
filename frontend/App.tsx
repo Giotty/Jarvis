@@ -3,7 +3,18 @@ import { Core, Sparkline, Waveform } from './Core';
 import { Settings, Setup } from './Settings';
 import { useVoice } from './useVoice';
 import { SpeechPlayback } from './speechPlayback';
-import { Audit, Config, Confirmation, Memory, Stats, Task, VisionResult, unwrap } from './types';
+import {
+  Audit,
+  Config,
+  Confirmation,
+  Memory,
+  Stats,
+  Task,
+  VisionResult,
+  ScreenState,
+  BrowserState,
+  unwrap,
+} from './types';
 const modules = [
   'HOME',
   'VISION',
@@ -75,6 +86,8 @@ export function App() {
     [logs, setLogs] = useState<Audit[]>([]),
     [confirmation, setConfirmation] = useState<Confirmation | null>(null),
     [vision, setVision] = useState<VisionResult | null>(null),
+    [screenContext, setScreenContext] = useState<ScreenState | null>(null),
+    [browserState, setBrowserState] = useState<BrowserState | null>(null),
     [clock, setClock] = useState(new Date()),
     [messages, setMessages] = useState<Message[]>([
       {
@@ -116,21 +129,25 @@ export function App() {
     commandFlight = useRef(Promise.resolve()),
     commandEpoch = useRef(0),
     acceptReplies = useRef(true);
+  const confirmationRef = useRef(confirmation);
+  confirmationRef.current = confirmation;
   configRef.current = config;
   const player = useRef<SpeechPlayback | null>(null),
     streamedSpeech = useRef(false),
     speechGeneration = useRef(0);
   const interrupt = useCallback(async () => {
-    commandEpoch.current++;
-    acceptReplies.current = false;
     partialReply.current = null;
     speechGeneration.current++;
     player.current?.stop();
     streamedSpeech.current = false;
     speechSynthesis.cancel();
-    setConfirmation(null);
-    if (window.jarvis) await unwrap(window.jarvis.interrupt());
-    await commandFlight.current;
+    if (window.jarvis) {
+      const status = await unwrap(window.jarvis.interrupt());
+      if (!status.taskContinues) {
+        commandEpoch.current++;
+        acceptReplies.current = false;
+      }
+    }
   }, []);
   const report = useCallback(
     (text: string, role = 'SYSTEM') =>
@@ -212,6 +229,31 @@ export function App() {
         return;
       }
       if (!text.trim()) return;
+      const spoken = text
+        .trim()
+        .replace(/^(?:hey\s+)?jarvis\b[, :.]*/i, '')
+        .trim();
+      if (/^(?:stop|cancel|never mind|nevermind|wait)[.!]*$/i.test(spoken)) {
+        commandEpoch.current++;
+        acceptReplies.current = false;
+        player.current?.stop();
+        speechSynthesis.cancel();
+        await unwrap(window.jarvis.cancelTask());
+        setConfirmation(null);
+        setState('IDLE');
+        report('Stopped.', 'JARVIS');
+        return;
+      }
+      const pending = confirmationRef.current;
+      if (pending && /^(?:yes|confirm|go ahead|no|cancel)[.!]*$/i.test(spoken)) {
+        if (pending.risk >= 3) {
+          report('Please use the confirmation button for this critical action.', 'JARVIS');
+          return;
+        }
+        await unwrap(window.jarvis.confirm(pending.id, !/^(?:no|cancel)/i.test(spoken)));
+        setConfirmation(null);
+        return;
+      }
       const epoch = commandEpoch.current;
       if (turn) {
         await commandFlight.current;
@@ -235,8 +277,8 @@ export function App() {
         await unwrap(window.jarvis.command(text, turn));
       } catch (e) {
         if (epoch === commandEpoch.current) {
-          report(String(e));
-          setState('ERROR');
+          report(e instanceof Error ? e.message : 'That didn’t work. Please try again.');
+          setState('IDLE');
         }
       } finally {
         commandBusy.current = false;
@@ -283,6 +325,7 @@ export function App() {
         setModels(s.models.models);
         setTasks(s.tasks);
         setMemories(s.memories);
+        setScreenContext(s.screenContext || null);
       })
       .catch((e) => report(String(e)));
     const unsub = api.on((e) => {
@@ -373,6 +416,20 @@ export function App() {
           break;
         case 'vision':
           setVision(e.data as VisionResult);
+          break;
+        case 'screen-context':
+          setScreenContext(e.data as ScreenState);
+          break;
+        case 'browser-state':
+          setBrowserState(e.data as BrowserState);
+          break;
+        case 'progress':
+          report(e.data as string);
+          break;
+        case 'commentary':
+          report(e.data as string, 'JARVIS');
+          if (!commandBusy.current && !player.current?.speaking && voiceRef.current.level < 0.03)
+            speechRef.current(e.data as string);
           break;
         case 'config':
           setConfig(e.data as Config);
@@ -530,6 +587,58 @@ export function App() {
             DESIGN PREVIEW — launch JARVIS desktop for telemetry, voice and automation. No simulated
             data is presented as live.
           </div>
+        )}
+        <section className="context-strip" aria-label="Live assistant context">
+          <span>
+            SCREEN CONTEXT{' '}
+            <b>{screenContext?.active ? 'ACTIVE' : config?.vision === 'off' ? 'OFF' : 'WAITING'}</b>
+          </span>
+          <span>
+            ACTIVE WINDOW <b>{screenContext?.activeWindow?.title || '—'}</b>
+          </span>
+          <span>
+            AI <b>{config?.model || '—'}</b>
+          </span>
+          <span>
+            VISION AI <b>{config?.visionModel || '—'}</b>
+          </span>
+          <span>
+            GAMING <b>{screenContext?.gaming ? 'ACTIVE' : 'OFF'}</b>
+          </span>
+          <span>
+            MICROPHONE <b>{voice.status}</b>
+          </span>
+          <span>
+            BROWSER{' '}
+            <b>
+              {browserState?.windows.find((w) => w.foreground)?.url ||
+                browserState?.windows[0]?.url ||
+                'NOT OBSERVED'}
+            </b>
+          </span>
+        </section>
+        {page === 'VISION' && screenContext && (
+          <Panel title="SCREEN CONTEXT & EVENTS" code="CONTEXT / LIVE">
+            <p>
+              {screenContext.summary ||
+                'Waiting for a meaningful screen change or a requested observation.'}
+            </p>
+            <div className="context-events">
+              {screenContext.events
+                .slice(-12)
+                .reverse()
+                .map((event, index) => (
+                  <div key={event.time + ':' + index}>
+                    <time>{new Date(event.time).toLocaleTimeString()}</time>
+                    <span>{event.text}</span>
+                  </div>
+                ))}
+            </div>
+            <p className="help">
+              Current observations are temporary. Screenshots and this event timeline are not saved
+              to long-term memory.
+            </p>
+          </Panel>
         )}
         {page === 'HOME' && (
           <div className="home-grid">
@@ -1051,7 +1160,15 @@ export function App() {
                 {logs.map((l, i) => (
                   <tr key={i}>
                     <td>{new Date(l.time).toLocaleTimeString()}</td>
-                    <td>{l.event}</td>
+                    <td>
+                      {l.event}
+                      {l.diagnostic && (
+                        <details>
+                          <summary>Technical details</summary>
+                          <pre>{l.diagnostic}</pre>
+                        </details>
+                      )}
+                    </td>
                     <td>{l.tool || '—'}</td>
                     <td>{l.risk ?? '—'}</td>
                     <td>{l.status || '—'}</td>

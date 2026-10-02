@@ -15,7 +15,11 @@ def foreground():
     rect, pid = wintypes.RECT(), wintypes.DWORD()
     user.GetWindowRect(window, ctypes.byref(rect))
     user.GetWindowThreadProcessId(window, ctypes.byref(pid))
-    return {'hwnd': int(window or 0), 'pid': pid.value, 'title': title.value,
+    from windows_context import process_name
+    point = wintypes.POINT()
+    user.GetCursorPos(ctypes.byref(point))
+    return {'hwnd': int(window or 0), 'pid': pid.value, 'title': title.value, 'application': process_name(pid.value),
+            'mouse': {'x': point.x, 'y': point.y},
             'bounds': {'x': rect.left, 'y': rect.top, 'width': rect.right - rect.left, 'height': rect.bottom - rect.top}}
 
 def roblox_executable():
@@ -50,6 +54,38 @@ def execute(tool, args):
     if tool == 'launch_registered_app':
         from registered_apps import launch
         return launch(args['appId'], args['risk'])
+    if tool == 'application_inventory':
+        from registered_apps import inventory
+        return inventory()
+    if tool in ['browser_state', 'browser_navigate', 'browser_control']:
+        import browser_control
+        if tool == 'browser_state': return browser_control.state()
+        if tool == 'browser_navigate': return browser_control.navigate(args['url'], args.get('newTab', False))
+        return browser_control.control(args['action'], args.get('index', 1))
+    if tool == 'list_windows':
+        from windows_context import windows
+        return {'windows': windows()}
+    if tool == 'list_installed_games':
+        from installed_games import installed
+        return installed()
+    if tool == 'verify_application':
+        from windows_context import windows, process_name
+        name=args['name'].casefold()
+        found=[w for w in windows() if w['application']!='jarvis.exe' and
+               (name in w['title'].casefold() or name.replace(' ','') in w['application'].replace(' ','').casefold())]
+        if found: return {'verified':True,'observed_result':found[0]}
+        pid=args.get('pid')
+        if pid and process_name(pid): return {'verified':True,'observed_result':{'pid':pid,'application':process_name(pid)}}
+        return {'verified':False,'observed_result':None}
+    if tool == 'focus_browser':
+        from windows_context import windows, focus
+        from browser_control import BROWSERS
+        if not any(w['hwnd']==args['hwnd'] and w['application'] in BROWSERS for w in windows()):
+            raise RuntimeError('That browser window is no longer available.')
+        return focus(args['hwnd'])
+    if tool == 'focus_application':
+        from windows_context import focus_named
+        return focus_named(args['name'])
     if tool == 'list_ui_elements':
         from accessibility import describe
         return describe()
@@ -110,7 +146,8 @@ def execute(tool, args):
     if tool == 'click_verified':
         from ctypes import wintypes
         current = foreground()
-        if current != args['window']:
+        identity = ['hwnd', 'pid', 'title', 'bounds', 'application']
+        if any(current.get(k) != args['window'].get(k) for k in identity):
             raise RuntimeError('The target window changed; no click was performed. Ask again.')
         pg.moveTo(args['x'], args['y'], duration=.15)
         user = ctypes.windll.user32
@@ -119,7 +156,8 @@ def execute(tool, args):
         user.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
         user.GetAncestor.restype = wintypes.HWND
         hit = user.GetAncestor(user.WindowFromPoint(wintypes.POINT(args['x'], args['y'])), 2)
-        if int(hit or 0) != current['hwnd'] or foreground() != current:
+        after = foreground()
+        if int(hit or 0) != current['hwnd'] or any(after.get(k) != current.get(k) for k in identity):
             raise RuntimeError('The target is covered or its window changed; no click was performed.')
         pg.click()
         return {'dispatched': True, 'verified_target': True, 'page_change_verified': False}
@@ -129,6 +167,9 @@ def execute(tool, args):
         if args['button'] == 'double': pg.doubleClick()
         else: pg.click(button=args['button'])
     elif tool == 'scroll': pg.scroll(args['amount'])
+    elif tool == 'drag_mouse':
+        pg.moveTo(args['x'],args['y'],duration=.2)
+        pg.dragTo(args['toX'],args['toY'],duration=.4,button='left')
     elif tool == 'hotkey': pg.hotkey(*args['keys'])
     elif tool == 'media': pg.press(args['key'])
     elif tool == 'window_control':

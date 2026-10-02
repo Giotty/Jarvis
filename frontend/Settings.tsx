@@ -90,6 +90,7 @@ export function Settings({ config, models, save, refresh }: Props) {
             {toggle('tray', 'Minimize to system tray')}
             {toggle('minimized', 'Start minimized')}
             {select('animations', 'Animation intensity', ['full', 'reduced', 'off'])}
+            {select('proactive', 'Proactive assistance', ['off', 'low', 'normal'])}
           </>
         )}
         {section === 'AI' && (
@@ -188,12 +189,21 @@ export function Settings({ config, models, save, refresh }: Props) {
             {select('captureScope', 'Capture scope', ['screen', 'active-window'])}
             {input('monitor', 'Monitor ID (blank = primary)')}
             {input('interval', 'Minimum analysis interval / seconds', 'number', 10, 300)}
+            {input('screenSampleSeconds', 'Screen sampling / seconds', 'number', 2, 30)}
+            {select('gamingMode', 'Gaming Mode', ['off', 'auto', 'on'])}
+            {select('gamingCommentary', 'Gaming commentary', [
+              'off',
+              'important',
+              'normal',
+              'verbose',
+            ])}
             {input('imageQuality', 'Capture width / pixels', 'number', 400, 1920)}
             {input('frameThreshold', 'Frame difference threshold', 'number', 0, 1)}
             <p className="help">
               Screenshots stay in memory. Continuous vision compares downsampled frames before
-              inference. OCR is not included in this release. Active-window capture requires the
-              Python worker.
+              inference. Active-window changes trigger new context. Visible text comes from
+              accessibility and local vision. Gaming Mode uses reduced background resolution and
+              comments only on visible information; it never controls combat.
             </p>
           </>
         )}
@@ -203,6 +213,39 @@ export function Settings({ config, models, save, refresh }: Props) {
             {toggle('mouse', 'Allow mouse control')}
             {toggle('keyboard', 'Allow keyboard control')}
             {toggle('browser', 'Allow app and browser launch')}
+            <label className="setting-row">
+              <span>
+                Application aliases
+                <small>JSON mapping an alias to a real installed app name.</small>
+              </span>
+              <textarea
+                defaultValue={JSON.stringify(draft.appAliases, null, 2)}
+                onBlur={(e) => {
+                  try {
+                    update('appAliases', JSON.parse(e.target.value));
+                    setError('');
+                  } catch {
+                    setError('Application aliases must be a valid JSON object.');
+                  }
+                }}
+              />
+            </label>
+            <label className="setting-row">
+              <span>
+                Website aliases<small>JSON mapping names to ordinary web URLs.</small>
+              </span>
+              <textarea
+                defaultValue={JSON.stringify(draft.websiteAliases, null, 2)}
+                onBlur={(e) => {
+                  try {
+                    update('websiteAliases', JSON.parse(e.target.value));
+                    setError('');
+                  } catch {
+                    setError('Website aliases must be a valid JSON object.');
+                  }
+                }}
+              />
+            </label>
             {toggle('filesystem', 'Allow filesystem tools')}
             {select('fileAccess', 'File access scope', ['selected', 'computer'])}
             {input(
