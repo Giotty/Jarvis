@@ -61,6 +61,48 @@ const answer = (content = 'Done.') => ({ role: 'assistant', content });
 let id = 0;
 const call = (name, args = {}) => ({ id: 'call-' + ++id, function: { name, arguments: args } });
 const action = (...tool_calls) => ({ role: 'assistant', content: '', tool_calls });
+
+test('a false filesystem access denial is corrected into a real tool call without screen access', async () => {
+  const s = setup({ fileAccess: 'computer' });
+  s.replies.push(
+    answer("I don't have access to your files."),
+    action(call('search_files', { query: 'jarvis' })),
+    answer('Found the matching paths.'),
+  );
+  await s.agent.command('Find a file named jarvis anywhere on my computer.');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['search_files'],
+  );
+  assert.equal(s.agent.active.status, 'completed');
+  assert.equal(s.agent.privateTask, true);
+});
+
+test('persistent false access denials get a bounded correction and never falsely deny enabled tools', async () => {
+  const s = setup({ fileAccess: 'computer' });
+  s.replies.push(
+    answer("I don't have access to your files."),
+    answer("I don't have access to your files."),
+  );
+  await s.agent.command('Find my file.');
+  assert.equal(s.replies.length, 0);
+  assert.match(s.events.find((e) => e.type === 'reply').data, /tools are enabled/);
+});
+
+test('fresh factual answers without evidence are corrected into background research for unfamiliar topics', async () => {
+  const s = setup();
+  s.replies.push(
+    answer('A new release was announced today.'),
+    action(call('web_search', { query: 'current unfamiliar movie release announcements' })),
+    answer('Here are the sourced updates.'),
+  );
+  await s.agent.command('Give me two current movie news updates.');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['web_search'],
+  );
+  assert.equal(s.agent.active.status, 'completed');
+});
 test('repeated failures with intervening reads stop promptly and leave the next command usable', async () => {
   const s = setup();
   s.executor.prepare = async () => ({ automaticNavigation: true });

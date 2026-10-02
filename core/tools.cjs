@@ -95,9 +95,34 @@ const definitions = {
   web_search: {
     risk: 0,
     permission: 'browser',
-    schema: z.object({ query: z.string().trim().min(1).max(500) }).strict(),
+    schema: z
+      .object({
+        query: z.string().trim().min(1).max(500),
+        topic: z.enum(['general', 'news', 'video']).default('general'),
+      })
+      .strict(),
     description:
-      'Search the public web without opening the browser. Returns real source URLs and snippets. Use for current facts, troubleshooting and guides.',
+      'Research the public web IN THE BACKGROUND and read source pages without opening any browser or inspecting the screen. Use for current facts, stock information, public posts, movie updates, news and guides. Returns real URLs, source text, snippets and dates so you can answer directly with citations. Use get_weather for conditions/forecasts. Private login-only content may require a connected app.',
+  },
+  get_weather: {
+    risk: 0,
+    permission: 'browser',
+    schema: z
+      .object({
+        location: z
+          .string()
+          .trim()
+          .min(2)
+          .max(200)
+          .optional()
+          .describe(
+            'City, preferably with region/country. Omit only when a default city is saved.',
+          ),
+        days: z.number().int().min(1).max(7).default(3),
+      })
+      .strict(),
+    description:
+      'Fetch current weather and up to 7 days of forecasts directly in the background from Open-Meteo; no browser or screen required. Answer with temperature, conditions and source. Ask for a city only if neither the request nor saved weatherLocation provides one.',
   },
   find_video: {
     risk: 0,
@@ -223,7 +248,7 @@ const definitions = {
       })
       .strict(),
     description:
-      'Search YouTube, Google or Roblox directly in the browser. Automatic, no typing or search-bar clicks needed. Prefer for all web searches.',
+      'Open search results in the visible browser ONLY when the user asks to open a page, watch a video or interact with a website. For questions and information requests use background web_search/get_weather instead, then answer directly.',
   },
   find_roblox_games: {
     risk: 0,
@@ -494,10 +519,11 @@ const definitions = {
       .object({
         query: z.string().min(1).max(100),
         directory: z.string().min(1).max(8000).optional(),
+        cursor: z.string().uuid().optional(),
       })
       .strict(),
     description:
-      'Search real filenames in a permitted directory or the user folder. Computer access allows any local drive directory. Search is bounded; give a narrower directory when limited.',
+      'Find real files AND folders by name. With computer file access and no directory, searches ALL accessible local drives, starting with user folders. No File Explorer or screenshot needed. Paginated: if incomplete and more results are needed, reuse the returned cursor with the same query/directory. Never claim no access or no matches without checking. Returns full paths; cannot bypass Windows permissions or follow links/junctions.',
   },
   open_file: {
     risk: 2,
@@ -764,6 +790,7 @@ class Executor {
         'capture_screen',
         'read_visible_text',
         'web_search',
+        'get_weather',
         'find_video',
         'extract_page_text',
         'summarize_page',
@@ -791,7 +818,9 @@ class Executor {
         if (p.action === 'new_tab' && p.url) return this.host.browser.open(p.url, signal, true);
         return this.host.browser.control(p.action, p.index, signal);
       case 'web_search':
-        return this.host.research.search(p.query, signal);
+        return this.host.research.research(p.query, signal, p.topic);
+      case 'get_weather':
+        return require('./weather.cjs').weather(p.location || c.weatherLocation, p.days, signal);
       case 'find_video':
         return this.host.research.search(p.query, signal, true);
       case 'extract_page_text':
@@ -984,7 +1013,7 @@ class Executor {
         this.host.clipboard.writeText(p.text);
         return { success: true };
       case 'search_files': {
-        return system.searchFiles(c, p.query, p.directory);
+        return system.searchFiles(c, p.query, p.directory, p.cursor, signal);
       }
       case 'open_file': {
         const file = await system.resolveFile(c, p.path);

@@ -1,6 +1,6 @@
 # General agent update
 
-0.2.1 follow-up: full local drive access and existing Windows permissions are retained. Volume now uses a real Windows audio endpoint with read-back verification. Generic navigation supports arbitrary observed labels, menus, tabs, custom/text controls, duplicate resolution and native activation patterns; vision is a fallback. Complete tool schemas prevent silently lost parameter constraints. Target preparation has a deadline, and three unresolved failures stop a task before a prolonged retry loop. Current built-ins expose 63 tools. See the latest verification section for live checks and limitations.
+0.2.3 follow-up: background research reads public sources, weather uses a direct Open-Meteo tool, and YouTube pages use public metadata and publication-dated channel feeds. Current-information answers without research and unsupported file-access denials receive one bounded correction. Computer-wide filename search has resumable pages across accessible local drives, including hidden/deep directories. File metadata follows the same cloud privacy policy as file contents. Current built-ins expose 64 tools. Read-only manual screen inspection no longer requires a foreground focus change; input actions retain their focus/target checks. See the latest verification section for live checks and limitations.
 
 Only Giotty/Jarvis was modified. Existing HUD, local speech, screen capture, automation, telemetry, memory and installer were retained. Cloud processing remains disabled and no paid requests were made.
 

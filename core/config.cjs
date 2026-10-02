@@ -3,6 +3,7 @@ const schema = z
   .object({
     setupComplete: z.boolean().default(false),
     mock: z.boolean().default(false),
+    weatherLocation: z.string().trim().max(200).default(''),
     provider: z.enum(['ollama', 'openai', 'anthropic']).default('ollama'),
     fallbackProvider: z.enum(['none', 'ollama', 'openai', 'anthropic']).default('ollama'),
     cloudEnabled: z.boolean().default(false),

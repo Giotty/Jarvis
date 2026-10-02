@@ -2,7 +2,7 @@
 function targetWindow(getWindow, delay = () => new Promise((r) => setTimeout(r, 250)), prepare) {
   let depth = 0;
   let restore = false;
-  return async (action) => {
+  return async (action, { focus = true } = {}) => {
     const win = getWindow();
     if (depth++ === 0) {
       restore = Boolean(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
@@ -10,7 +10,7 @@ function targetWindow(getWindow, delay = () => new Promise((r) => setTimeout(r, 
     }
     try {
       if (restore) await delay();
-      if (depth === 1) await prepare?.();
+      if (depth === 1 && focus) await prepare?.();
       return await action();
     } finally {
       if (--depth === 0 && restore && win && !win.isDestroyed()) {

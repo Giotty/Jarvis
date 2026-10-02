@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const { ContextManager } = require('./context-manager.cjs');
-const { safeResponse } = require('./response-generator.cjs');
+const { safeResponse, capabilityCorrection } = require('./response-generator.cjs');
 const { publicError, failure } = require('../agent-errors.cjs');
 const { actionSignature } = require('../control-matching.cjs');
 class AgentLoop {
@@ -91,6 +91,7 @@ class AgentLoop {
     const c = this.config(),
       attempts = new Map();
     let unresolvedFailures = 0;
+    let correctedCapability = false;
     for (let turn = 0; turn < c.agentMaxSteps; turn++) {
       this.controller.signal.throwIfAborted();
       this.emit('state', 'THINKING');
@@ -119,7 +120,22 @@ class AgentLoop {
       this.controller.signal.throwIfAborted();
       const calls = reply.tool_calls || [];
       if (!calls.length) {
-        const response = safeResponse(reply.content, this.active.steps);
+        const correction = capabilityCorrection(
+          reply.content,
+          this.active.steps,
+          schema,
+          c,
+          this.request,
+        );
+        if (correction && !correctedCapability) {
+          correctedCapability = true;
+          this.emit('speech-abort', true);
+          this.messages.push(reply, { role: 'user', content: correction });
+          continue;
+        }
+        const response = correction
+          ? 'The requested tools are enabled, but I couldn’t complete that request. Please give me a specific location, filename or topic to try.'
+          : safeResponse(reply.content, this.active.steps);
         this.context.finish(this.request, response, this.sensitive);
         this.active.status = 'completed';
         this.active.stage = 'finished';

@@ -228,49 +228,13 @@ async function readFile(config, input, offset = 0) {
     await handle.close();
   }
 }
-async function searchFiles(config, query, input) {
-  const root = await resolveFile(config, input || config.fileRoot);
-  const matches = [],
-    stack = [{ dir: root, depth: 0 }];
-  const started = Date.now();
-  let scanned = 0,
-    skipped = 0;
-  while (stack.length && scanned < 20000 && Date.now() - started < 2000 && matches.length < 100) {
-    const { dir, depth } = stack.pop();
-    let items;
-    try {
-      items = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      skipped++;
-      continue;
-    }
-    const next = [];
-    for (const entry of items) {
-      if (++scanned > 20000) break;
-      const file = path.join(dir, entry.name);
-      if (entry.name.toLowerCase().includes(query.toLowerCase())) matches.push(file);
-      if (
-        entry.isDirectory() &&
-        !entry.isSymbolicLink() &&
-        depth < 12 &&
-        (input || !['node_modules', '.git', '.venv', 'AppData'].includes(entry.name))
-      )
-        next.push({ dir: file, depth: depth + 1 });
-    }
-    // Search user-facing folders before huge system/build folders.
-    next.sort(
-      (a, b) =>
-        Number(/\\(?:Documents|Downloads|Desktop)$/i.test(a.dir)) -
-        Number(/\\(?:Documents|Downloads|Desktop)$/i.test(b.dir)),
-    );
-    stack.push(...next);
-  }
-  return {
-    matches: matches.slice(0, 100),
-    truncated: Boolean(stack.length),
-    skippedDirectories: skipped,
-    message: 'Filename search; give a narrower directory to continue if results were limited.',
-  };
+const fileSearch = new (require('./file-search.cjs').FileSearch)();
+async function searchFiles(config, query, input, cursor, signal) {
+  const computer = config.fileAccess === 'computer' && !input;
+  const home = await resolveFile(config, input || config.fileRoot);
+  const roots = computer ? [...new Set([home, ...(await drives()).drives])] : [home];
+  const scope = JSON.stringify([config.fileAccess, config.fileRoot, input || null]);
+  return fileSearch.search({ query, roots, scope, cursor, signal });
 }
 function settingsUri(page) {
   const aliases = {

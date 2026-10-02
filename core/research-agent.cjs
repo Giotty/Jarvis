@@ -13,7 +13,11 @@ function publicAddress(address) {
     !(a === 100 && b >= 64 && b <= 127)
   );
 }
-async function webGet(input, signal) {
+async function webGet(
+  input,
+  signal,
+  accept = 'text/html,application/xhtml+xml,application/rss+xml,text/plain',
+) {
   let url = new URL(input);
   for (let redirect = 0; redirect < 4; redirect++) {
     if (
@@ -33,7 +37,7 @@ async function webGet(input, signal) {
         : AbortSignal.timeout(12000),
       headers: {
         'User-Agent': 'Mozilla/5.0 JARVIS-Research/1.0',
-        Accept: 'text/html,application/xhtml+xml,application/rss+xml,text/plain',
+        Accept: accept,
       },
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -44,7 +48,7 @@ async function webGet(input, signal) {
     }
     if (!response.ok) throw Error(`Research page returned HTTP ${response.status}.`);
     const contentType = response.headers.get('content-type') || '';
-    if (!/text|html|xml/.test(contentType)) {
+    if (!/text|html|xml|json/.test(contentType)) {
       await response.body?.cancel();
       throw Error('This page is not readable web text.');
     }
@@ -65,21 +69,69 @@ async function webGet(input, signal) {
 function extract(html, url) {
   const $ = cheerio.load(html);
   const title = $('title').first().text().trim();
+  const publishedAt =
+    $('meta[property="article:published_time"],meta[name="date"],meta[itemprop="datePublished"]')
+      .first()
+      .attr('content') ||
+    $('time[datetime]').first().attr('datetime') ||
+    null;
   $('script,style,noscript,iframe,form,nav,footer,header,aside,svg,[hidden]').remove();
   const main = $('article,main,[role=main]').first();
   const text = (main.length ? main : $('body')).text().replace(/\s+/g, ' ').trim().slice(0, 12000);
-  return { url, title, text, untrusted: true, fetchedAt: Date.now() };
+  return { url, title, text, publishedAt, untrusted: true, fetchedAt: Date.now() };
 }
 class ResearchAgent {
-  constructor() {
+  constructor({ get = webGet } = {}) {
     this.results = new Map();
+    this.get = get;
+  }
+  async research(query, signal, topic = 'general') {
+    const found = await this.search(topic === 'video' ? query + ' YouTube' : query, signal);
+    if (!found.success) return found;
+    const read = async (items) =>
+      Promise.all(
+        items.map(async (item) => {
+          try {
+            const page = await this.page(item.url, signal);
+            return {
+              ...item,
+              ...page,
+              text: page.videos?.length
+                ? 'Public channel uploads and their publication dates are listed in videos below.'
+                : page.text.slice(0, 3000),
+              ...(page.videos ? { videos: page.videos.slice(0, 8) } : {}),
+              readable: Boolean(
+                page.text && (page.text.length >= 200 || page.video || page.videos?.length),
+              ),
+            };
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            return {
+              ...item,
+              readable: false,
+              message: 'Source could not be read; this result only has a search snippet.',
+            };
+          }
+        }),
+      );
+    const fetched = await read(found.results.slice(0, 6));
+    const sources = [
+      ...fetched.filter((s) => s.readable),
+      ...fetched.filter((s) => !s.readable),
+    ].slice(0, 3);
+    return {
+      ...found,
+      sources,
+      message:
+        'Background research completed. Answer the user directly with citations to actual source URLs. Distinguish snippets from read pages. Fetched time is not publication time. For stock quotes verify the company, exchange and currency: a foreign listing is not interchangeable with the primary listing. Do not claim a live stock quote or a new post unless the source includes its timestamp; state delayed/stale data honestly. Do not ask the user to open a browser or read their screen.',
+    };
   }
   async search(query, signal, video = false) {
     if (!query?.trim()) throw Error('A search phrase is required.');
-    const phrase = video ? query + ' site:youtube.com/watch' : query;
+    const phrase = video ? query + ' YouTube video' : query;
     let page;
     try {
-      page = await webGet(
+      page = await this.get(
         'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(phrase),
         signal,
       );
@@ -103,6 +155,7 @@ class ResearchAgent {
         target.hostname.endsWith('duckduckgo.com')
       )
         return;
+      if (video && !videoId(target)) return;
       const title = link.text().trim();
       if (!title || results.some((r) => r.url === target.href)) return;
       const item = {
@@ -116,7 +169,7 @@ class ResearchAgent {
       results.push(item);
     });
     if (!results.length) {
-      const alternate = await webGet(
+      const alternate = await this.get(
         'https://www.bing.com/search?format=rss&q=' + encodeURIComponent(phrase),
         signal,
       );
@@ -129,6 +182,7 @@ class ResearchAgent {
           try {
             const parsed = new URL(url);
             if (!['https:', 'http:'].includes(parsed.protocol) || !title) return;
+            if (video && !videoId(parsed)) return;
             results.push({
               id: require('node:crypto').randomUUID(),
               title,
@@ -154,8 +208,62 @@ class ResearchAgent {
     };
   }
   async page(url, signal) {
-    const page = await webGet(url, signal);
-    return { success: true, verified: true, ...extract(page.html, page.url) };
+    const parsed = new URL(url),
+      id = videoId(parsed);
+    if (id) {
+      const response = await this.get(
+        'https://www.youtube.com/oembed?format=json&url=' +
+          encodeURIComponent('https://www.youtube.com/watch?v=' + id),
+        signal,
+        'application/json',
+      );
+      const data = JSON.parse(response.html);
+      return {
+        success: true,
+        verified: true,
+        url: 'https://www.youtube.com/watch?v=' + id,
+        title: data.title,
+        text: `${data.title} — by ${data.author_name}. Public YouTube video metadata; publication date and contents are not supplied by oEmbed.`,
+        video: { id, title: data.title, author: data.author_name, authorUrl: data.author_url },
+        fetchedAt: Date.now(),
+        untrusted: true,
+      };
+    }
+    const page = await this.get(url, signal);
+    const output = { success: true, verified: true, ...extract(page.html, page.url) };
+    if (
+      ['www.youtube.com', 'youtube.com'].includes(parsed.hostname) &&
+      /^(?:\/@|\/channel\/)/.test(parsed.pathname)
+    ) {
+      const channelId =
+        page.html.match(/"externalId":"(UC[A-Za-z0-9_-]{22})"/)?.[1] ||
+        page.html.match(/feeds\/videos\.xml\?channel_id=(UC[A-Za-z0-9_-]{22})/)?.[1];
+      if (channelId) {
+        try {
+          const feed = await this.get(
+            'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId,
+            signal,
+          );
+          const xml = cheerio.load(feed.html, { xmlMode: true });
+          output.videos = xml('entry')
+            .toArray()
+            .slice(0, 15)
+            .map((node) => ({
+              title: xml(node).find('title').text(),
+              url: xml(node).find('link[rel="alternate"]').attr('href'),
+              publishedAt: xml(node).find('published').text(),
+              author: xml(node).find('author name').text(),
+            }));
+          output.text = JSON.stringify({
+            channel: output.title,
+            recentPublicUploads: output.videos,
+          });
+        } catch (error) {
+          if (signal?.aborted) throw error;
+        }
+      }
+    }
+    return output;
   }
   selected(id) {
     const item = this.results.get(id);
@@ -164,4 +272,13 @@ class ResearchAgent {
     return item;
   }
 }
-module.exports = { ResearchAgent, extract, publicAddress };
+function videoId(url) {
+  let id;
+  if (url.hostname === 'youtu.be') id = url.pathname.slice(1);
+  if (['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(url.hostname)) {
+    if (url.pathname === '/watch') id = url.searchParams.get('v');
+    else if (/^\/(?:shorts|embed)\//.test(url.pathname)) id = url.pathname.split('/')[2];
+  }
+  return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
+}
+module.exports = { ResearchAgent, extract, publicAddress, webGet, videoId };

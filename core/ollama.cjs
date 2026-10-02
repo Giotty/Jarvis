@@ -48,6 +48,7 @@ class Ollama {
     const decoder = new TextDecoder();
     let buffer = '';
     let finished = false;
+    let finishReason;
     const message = { role: 'assistant', content: '', tool_calls: [] };
     const usage = { input: 0, output: 0 };
     const consume = (line) => {
@@ -62,6 +63,7 @@ class Ollama {
       if (frame.message?.tool_calls) message.tool_calls.push(...frame.message.tool_calls);
       if (frame.done) {
         finished = true;
+        finishReason = frame.done_reason;
         usage.input = frame.prompt_eval_count || 0;
         usage.output = frame.eval_count || 0;
       }
@@ -80,7 +82,12 @@ class Ollama {
     signal?.throwIfAborted();
     if (!finished) throw Error('The model response ended before completion. Try again.');
     if (!message.tool_calls.length) delete message.tool_calls;
-    return { message, prompt_eval_count: usage.input, eval_count: usage.output };
+    return {
+      message,
+      done_reason: finishReason,
+      prompt_eval_count: usage.input,
+      eval_count: usage.output,
+    };
   }
   async models() {
     try {
@@ -141,13 +148,14 @@ class Ollama {
         keep_alive: '30m',
         ...(options.schema ? { format: options.schema } : {}),
         ...(model.startsWith('qwen3') ? { think: false } : {}),
-        options: { temperature: c.temperature, num_ctx: c.context, num_predict: 512 },
+        options: { temperature: c.temperature, num_ctx: c.context, num_predict: 1024 },
       },
       signal,
       onDelta,
     );
     return {
       ...response.message,
+      finishReason: response.done_reason,
       usage: { input: response.prompt_eval_count || 0, output: response.eval_count || 0 },
     };
   }

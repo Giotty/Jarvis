@@ -1,6 +1,7 @@
 export type Config = {
   setupComplete: boolean;
   mock: boolean;
+  weatherLocation: string;
   provider: ProviderID;
   fallbackProvider: ProviderID | 'none';
   cloudEnabled: boolean;

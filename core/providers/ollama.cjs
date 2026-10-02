@@ -21,7 +21,9 @@ class OllamaProvider extends AIProvider {
   }
   async chat(messages, tools, vision, signal, onDelta, options = {}) {
     const reply = await this.local.chat(
-      messages.map(({ _native: _n, _privacy: _p, _request: _r, usage: _u, ...m }) => m),
+      messages.map(
+        ({ _native: _n, _privacy: _p, _request: _r, usage: _u, finishReason: _f, ...m }) => m,
+      ),
       tools,
       vision,
       signal,

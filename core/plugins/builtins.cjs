@@ -50,6 +50,7 @@ const categories = {
   ],
   research: [
     'web_search',
+    'get_weather',
     'find_video',
     'extract_page_text',
     'open_search_result',
@@ -108,6 +109,7 @@ function builtins(executor, store, emit) {
               'get_audio_state',
               'list_running_apps',
               'web_search',
+              'get_weather',
               'find_video',
               'extract_page_text',
               'list_drives',
@@ -118,7 +120,7 @@ function builtins(executor, store, emit) {
           privacy:
             name === 'read_clipboard'
               ? 'clipboard'
-              : name === 'read_file'
+              : ['read_file', 'search_files', 'list_directory', 'list_drives'].includes(name)
                 ? 'files'
                 : name === 'run_powershell'
                   ? 'external'

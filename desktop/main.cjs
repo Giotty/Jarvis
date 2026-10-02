@@ -330,7 +330,7 @@ function handlers() {
   handle('vision', async () => {
     emit('state', 'OBSERVING SCREEN');
     try {
-      await withTarget(() => screenContext.describe());
+      await withTarget(() => screenContext.describe(), { focus: false });
       const frame = screenContext.frame;
       return {
         preview: 'data:image/jpeg;base64,' + frame.image,

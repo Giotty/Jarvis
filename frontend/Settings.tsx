@@ -98,6 +98,7 @@ export function Settings({ config, save }: Props) {
         </div>
         {section === 'GENERAL' && (
           <>
+            {input('weatherLocation', 'Default weather city (city, region/country)')}
             {toggle('startup', 'Launch with Windows')}
             {toggle('tray', 'Minimize to system tray')}
             {toggle('minimized', 'Start minimized')}
