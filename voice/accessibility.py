@@ -49,11 +49,24 @@ def locate(label):
     return {'x': int((bounds.left + bounds.right) / 2), 'y': int((bounds.top + bounds.bottom) / 2),
             'confidence': 1, 'label': matches[0].Name, 'source': 'Windows UI Automation'}
 
-def fill(text, label=None, search=False):
+def sensitive_destination(application, label):
+    import re
+    return (application.casefold() in ['cmd.exe', 'powershell.exe', 'pwsh.exe', 'windowsterminal.exe',
+            'wt.exe', 'regedit.exe', 'mmc.exe', 'python.exe', 'pythonw.exe', 'wscript.exe', 'cscript.exe',
+            'wsl.exe', 'bash.exe', 'mintty.exe', 'conhost.exe'] or
+            bool(re.search(r'\b(?:terminal|console|command|powershell|password|credit card|card number|security code|payment|registry|administrator)\b', label, re.I)))
+
+def fill(text, label=None, search=False, allow_sensitive=False):
     import uiautomation as ui
     control = find_edit(label) if label else ui.GetFocusedControl()
     if control.ControlTypeName != 'EditControl' or control.IsPassword:
         raise RuntimeError('No editable destination is focused. Identify and focus the target field first.')
+    from automation import foreground
+    window = foreground()
+    if sensitive_destination(window['application'], control.Name) and not allow_sensitive:
+        return {'success': False, 'verified': False, 'error': 'sensitive_input_requires_confirmation',
+                'retryable': True, 'required_arguments': {'confirmSensitive': True},
+                'message': 'This is a command or sensitive field. Confirmation is needed before typing there.'}
     # The automatic path is limited to visibly named search fields, never arbitrary forms.
     if search and 'search' not in control.Name.casefold():
         raise RuntimeError('Automatic typing is only allowed in a verified Search field.')
@@ -64,6 +77,8 @@ def fill(text, label=None, search=False):
     control.SetFocus()
     if not control.HasKeyboardFocus:
         raise RuntimeError('The target field did not receive focus; no text was inserted.')
+    if foreground()['hwnd'] != window['hwnd']:
+        raise RuntimeError('The target window changed; no text was inserted.')
     pattern.SetValue(value)
     if pattern.Value != value:
         raise RuntimeError('The field did not contain the requested text after insertion.')

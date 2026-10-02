@@ -259,6 +259,7 @@ function handlers() {
     );
   });
   handle('interrupt', async () => {
+    screenContext?.prioritizeVoice();
     return planner?.bargeIn() || { taskContinues: false };
   });
   handle('confirm', (id, approved) =>
@@ -321,11 +322,13 @@ function handlers() {
   handle('logs', () => audit.items);
   handle('tasks', () => store.tasks());
   handle('synthesize', async (text) => {
+    screenContext?.prioritizeVoice();
     if (!config.tts || config.ttsEngine === 'windows')
       throw Error('Local neural voice output is not enabled.');
     return speaker.synthesize(z.string().min(1).max(2000).parse(text), voiceSettings());
   });
   handle('transcribe', async (audio) => {
+    screenContext?.prioritizeVoice();
     if (!config.microphone) throw Error('Microphone privacy is disabled.');
     emit('state', 'TRANSCRIBING');
     try {
@@ -466,7 +469,13 @@ async function init() {
     controls: () => nativeCall('list_ui_elements'),
     config: () => config,
     emit,
-    busy: () => Boolean(planner?.busy || planner?.active?.status === 'waiting'),
+    busy: () =>
+      Boolean(
+        planner?.busy ||
+        planner?.active?.status === 'waiting' ||
+        speech?.pending ||
+        speaker?.pending,
+      ),
     stats: () => lastStats,
     games: () => discoveredGames,
     analyze: (frame, question, signal) =>

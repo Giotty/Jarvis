@@ -94,7 +94,7 @@ def execute(tool, args):
         return locate(args['label'])
     if tool in ['type_text', 'fill_search']:
         from accessibility import fill
-        return fill(args['text'], args.get('label'), search=tool == 'fill_search')
+        return fill(args['text'], args.get('label'), search=tool == 'fill_search', allow_sensitive=args.get('allowSensitive', False))
     if tool == 'navigate_ui':
         from accessibility import navigate
         return navigate(args['label'])

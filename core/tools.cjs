@@ -373,11 +373,17 @@ const definitions = {
     description: 'Scroll foreground window',
   },
   type_text: {
-    risk: 2,
+    risk: 1,
     permission: 'keyboard',
-    schema: z.object({ text, label: z.string().min(1).max(200).optional() }).strict(),
+    schema: z
+      .object({
+        text,
+        label: z.string().min(1).max(200).optional(),
+        confirmSensitive: z.boolean().default(false),
+      })
+      .strict(),
     description:
-      'Focus a real accessible edit field by label, or use the already-focused edit field, and insert text with read-back verification. Requires confirmation for general fields. Never type before identifying the destination.',
+      'Type automatically into a verified ordinary edit field, with read-back verification. Does not press Enter or submit. If the worker identifies a command/security/payment field, retry with confirmSensitive=true to request approval. Never guess the destination.',
   },
   hotkey: {
     risk: 2,
@@ -520,6 +526,7 @@ function validate(action) {
     tool: action.tool,
     args: d.schema.parse(action.args),
     risk:
+      (action.tool === 'type_text' && action.args?.confirmSensitive === true) ||
       (action.tool === 'browser_control' && action.args?.action === 'close_tab') ||
       (action.tool === 'open_url' &&
         /\/(?:delete|remove|logout|checkout|purchase|send|submit)(?:\/|\?|$)/i.test(
@@ -657,7 +664,7 @@ function pythonCall(config, script, payload, timeout = 30000, signal) {
         );
       try {
         const result = JSON.parse(output);
-        if (result.error) reject(Error(result.error));
+        if (result.error && result.success !== false) reject(Error(result.error));
         else resolve(result);
       } catch {
         reject(Error('Invalid local worker response.'));
@@ -769,6 +776,7 @@ class Executor {
     )
       return { mock: true, message: `Simulated ${a.tool}; no PC input or file changes.` };
     const p = a.args;
+    if (a.tool === 'type_text') p.allowSensitive = action.risk >= 2;
     switch (a.tool) {
       case 'enable_tools':
         return {

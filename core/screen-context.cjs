@@ -46,6 +46,7 @@ class ScreenContext {
     this.analysisController = null;
     this.analysisGeneration = 0;
     this.refreshGeneration = 0;
+    this.pausedUntil = 0;
   }
   event(kind, text) {
     this.state.events = [...this.state.events, { time: Date.now(), kind, text }].slice(-80);
@@ -61,6 +62,10 @@ class ScreenContext {
   invalidateAnalysis() {
     this.analysisGeneration++;
     this.analysisController?.abort();
+  }
+  prioritizeVoice(ms = 15000) {
+    this.pausedUntil = Math.max(this.pausedUntil, Date.now() + ms);
+    this.invalidateAnalysis();
   }
   gaming(window) {
     const c = this.config();
@@ -178,6 +183,7 @@ class ScreenContext {
     const c = this.config();
     if (
       this.inFlight ||
+      Date.now() < this.pausedUntil ||
       this.busy() ||
       c.vision === 'off' ||
       c.vision === 'manual' ||
@@ -189,7 +195,9 @@ class ScreenContext {
       const observation = await this.refresh({ background: true });
       if (!observation || this.busy() || this.analysis || !this.state.needsAnalysis) return;
       const loaded = (this.stats()?.gpu || 0) > 75;
-      const minimum = this.state.gaming ? Math.max(loaded ? 60 : 30, c.interval) : c.interval;
+      const minimum = this.state.gaming
+        ? Math.max(loaded ? 60 : 30, c.interval)
+        : Math.max(c.proactive === 'low' ? 90 : 30, c.interval);
       if (Date.now() - (this.state.lastAnalysis || 0) < minimum * 1000) return;
       const generation = this.analysisGeneration;
       this.analysisController = new AbortController();

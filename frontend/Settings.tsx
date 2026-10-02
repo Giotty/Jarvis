@@ -284,8 +284,8 @@ export function Settings({ config, models, save, refresh }: Props) {
                 search-field input run automatically.
               </p>
               <p>
-                <b>02 / IMPORTANT</b> Approval for other clicks, keystrokes, clipboard, file moves,
-                and form submission.
+                <b>02 / IMPORTANT</b> Approval for other clicks, command or sensitive fields,
+                hotkeys, clipboard, file moves, and form submission.
               </p>
               <p>
                 <b>03 / CRITICAL</b> Explicit approval for deletion, overwrites, executable paths

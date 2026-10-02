@@ -5,6 +5,92 @@ const { BrowserAgent } = require('../core/browser-agent.cjs');
 const { fastIntent } = require('../core/agent-intake.cjs');
 const { publicError } = require('../core/agent-errors.cjs');
 const { validate } = require('../core/tools.cjs');
+const { ScreenContext } = require('../core/screen-context.cjs');
+
+test('ordinary typing runs automatically while sensitive typing still needs approval', () => {
+  assert.equal(validate({ tool: 'type_text', args: { text: 'MrBeast', label: 'Search' } }).risk, 1);
+  assert.equal(
+    validate({ tool: 'type_text', args: { text: 'a command', confirmSensitive: true } }).risk,
+    2,
+  );
+  assert.throws(() =>
+    validate({ tool: 'type_text', args: { text: 'a command', allowSensitive: true } }),
+  );
+  assert.equal(validate({ tool: 'run_powershell', args: { command: 'Get-Date' } }).risk, 3);
+});
+
+test('voice priority cancels and suppresses background analysis', async () => {
+  let probed = 0;
+  const context = new ScreenContext({
+    config: () => ({ vision: 'continuous' }),
+    busy: () => false,
+    probe: async () => {
+      probed++;
+    },
+  });
+  context.analysisController = new AbortController();
+  context.prioritizeVoice();
+  assert.equal(context.analysisController.signal.aborted, true);
+  await context.tick();
+  assert.equal(probed, 0);
+});
+
+test('a fresh image is encoded once rather than on every tool continuation', async () => {
+  const agent = planner(),
+    calls = [];
+  agent.ollama = {
+    chat: async (...args) => {
+      calls.push(args);
+      return { role: 'assistant', content: 'Ready' };
+    },
+  };
+  agent.controller = new AbortController();
+  agent.context.request = 'Inspect this screen';
+  agent.messages = [
+    { role: 'system', content: 'JARVIS' },
+    { role: 'user', content: 'Fresh screen', images: ['fixture'] },
+  ];
+  agent.visualTurn = true;
+  await agent.infer();
+  await agent.infer();
+  assert.equal(calls[0][2], true);
+  assert.equal(calls[1][2], false);
+  assert.equal(
+    calls[1][0].some((m) => m.images?.length),
+    false,
+  );
+});
+
+test('an action batch takes one fresh follow-up screen observation', async () => {
+  const agent = planner();
+  let observations = 0;
+  agent.config = () => ({ vision: 'manual' });
+  agent.controller = new AbortController();
+  agent.context.request = 'Open both websites';
+  agent.messages = [{ role: 'system', content: 'JARVIS' }];
+  agent.active = {
+    id: 'fixture',
+    status: 'running',
+    steps: ['https://www.google.com/', 'https://www.youtube.com/'].map((url) => ({
+      ...validate({ tool: 'open_url', args: { url } }),
+      status: 'pending',
+    })),
+  };
+  agent.executor.executeResult = async () => ({
+    success: true,
+    verified: true,
+    message: 'Opened',
+    observed_result: { url: 'fixture' },
+  });
+  agent.executor.observe = async () => {
+    observations++;
+    return { context: {}, image: 'fixture' };
+  };
+  agent.ollama = { chat: async () => ({ role: 'assistant', content: 'Done.' }) };
+  await agent.run();
+  assert.equal(observations, 1);
+  assert.equal(agent.active.status, 'completed');
+});
 
 function planner() {
   return new Planner({
