@@ -62,6 +62,74 @@ let id = 0;
 const call = (name, args = {}) => ({ id: 'call-' + ++id, function: { name, arguments: args } });
 const action = (...tool_calls) => ({ role: 'assistant', content: '', tool_calls });
 
+test('background research rejects browser/screen fallbacks, including same-batch actions, and resets for the next desktop request', async () => {
+  const s = setup();
+  s.replies.push(
+    action(
+      call('web_search', { query: 'latest public creator video views' }),
+      call('open_url', { url: 'https://www.youtube.com/' }),
+    ),
+    action(call('capture_screen')),
+    answer('The public count is unavailable from these sources.'),
+  );
+  await s.agent.command('How many views does the latest video have?');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['web_search'],
+  );
+  assert.equal(s.agent.backgroundOnly, true);
+  assert.equal(s.agent.active.status, 'completed');
+  s.replies.push(
+    action(call('open_application', { name: 'Calculator' })),
+    answer('Opened Calculator.'),
+  );
+  await s.agent.command('Open Calculator');
+  assert.equal(s.agent.backgroundOnly, false);
+  assert.equal(s.executed.at(-1).tool, 'open_application');
+});
+
+test('research for an explicitly requested desktop task still allows opening the result', async () => {
+  const s = setup();
+  s.replies.push(
+    action(call('web_search', { query: 'a tutorial', purpose: 'desktop_task' })),
+    action(call('open_url', { url: 'https://www.youtube.com/watch?v=abcdefghijk' })),
+    answer('Opened the tutorial.'),
+  );
+  await s.agent.command('Find a tutorial and open it in my browser.');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['web_search', 'open_url'],
+  );
+  assert.equal(s.agent.active.status, 'completed');
+});
+
+test('context overflow recovery is bounded, retains the request and never repeats executed tools', async () => {
+  const s = setup({ context: 8192 });
+  let calls = 0;
+  s.ai.chat = async (messages) => {
+    assert.ok(messages.some((m) => m.content === 'Find current information.'));
+    calls++;
+    if (calls === 1) return action(call('web_search', { query: 'current information' }));
+    if (calls === 2) throw Object.assign(Error('context overflow'), { code: 'context_overflow' });
+    return answer('Here is the sourced information.');
+  };
+  await s.agent.command('Find current information.');
+  assert.equal(calls, 3);
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['web_search'],
+  );
+  assert.equal(s.agent.active.status, 'completed');
+  calls = 0;
+  s.ai.chat = async () => {
+    calls++;
+    throw Object.assign(Error('context overflow'), { code: 'context_overflow' });
+  };
+  await s.agent.command('A new request.');
+  assert.equal(calls, 2);
+  assert.equal(s.agent.busy, false);
+});
+
 test('a false filesystem access denial is corrected into a real tool call without screen access', async () => {
   const s = setup({ fileAccess: 'computer' });
   s.replies.push(

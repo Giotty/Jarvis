@@ -4,7 +4,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { FileSearch } = require('../core/file-search.cjs');
 const { weather } = require('../core/weather.cjs');
-const { ResearchAgent, extract } = require('../core/research-agent.cjs');
+const {
+  ResearchAgent,
+  extract,
+  publicCount,
+  watchMetadata,
+} = require('../core/research-agent.cjs');
 const { PluginRegistry } = require('../core/plugins/registry.cjs');
 const { schema } = require('../core/config.cjs');
 const { capabilityCorrection } = require('../core/agent/response-generator.cjs');
@@ -336,4 +341,109 @@ test('YouTube pages use verified public video metadata and channel feed publicat
   const channel = await agent.page('https://www.youtube.com/@fixture');
   assert.equal(channel.videos[0].publishedAt, '2026-10-02T01:00:00Z');
   assert.match(channel.text, /New tutorial/);
+});
+
+test('YouTube public counts distinguish views from likes and missing statistics from zero', async () => {
+  assert.equal(publicCount('0'), 0);
+  for (const value of [undefined, '', '-1', '123 views', '9007199254740992'])
+    assert.equal(publicCount(value), null);
+  const html = `<meta itemprop="datePublished" content="2026-10-01">
+    <div itemprop="interactionStatistic"><meta itemprop="interactionType" content="https://schema.org/LikeAction"><meta itemprop="userInteractionCount" content="17"></div>
+    <div itemprop="interactionStatistic"><meta itemprop="interactionType" content="https://schema.org/WatchAction"><meta itemprop="userInteractionCount" content="2345678"></div>`;
+  assert.deepEqual(watchMetadata(html), { viewCount: 2345678, publishedAt: '2026-10-01' });
+  assert.equal(watchMetadata('<title>Consent required</title>').viewCount, null);
+  const get = async (url) => {
+    if (url.includes('oembed'))
+      return { html: JSON.stringify({ title: 'Video', author_name: 'Creator' }) };
+    if (url.includes('/watch')) return { html };
+    if (url.includes('/feeds/'))
+      return {
+        url,
+        html: `<feed xmlns:media="http://search.yahoo.com/mrss/">
+      <entry><title>Older regular video</title><link rel="alternate" href="https://www.youtube.com/watch?v=abcdefghijk"/><published>2026-09-30T00:00:00Z</published><updated>2026-10-02T00:00:00Z</updated><media:group><media:community><media:starRating count="99"/><media:statistics views="1234567"/></media:community></media:group></entry>
+      <entry><title>New Short</title><link rel="alternate" href="https://www.youtube.com/shorts/lmnopqrstuv"/><published>2026-10-01T00:00:00Z</published><media:group><media:community><media:statistics views="0"/></media:community></media:group></entry>
+      <entry><title>Missing count</title><link rel="alternate" href="https://www.youtube.com/watch?v=12345678901"/><published>2026-09-29T00:00:00Z</published></entry></feed>`,
+      };
+    return {
+      url,
+      html: '<title>Channel</title><script>{"externalId":"UCabcdefghijklmnopqrstuv"}</script>',
+    };
+  };
+  const agent = new ResearchAgent({ get });
+  const video = await agent.page('https://www.youtube.com/watch?v=abcdefghijk');
+  assert.equal(video.video.viewCount, 2345678);
+  assert.equal(video.publishedAt, '2026-10-01');
+  const channel = await agent.page('https://www.youtube.com/@creator');
+  assert.equal(channel.videos[0].isShort, true);
+  assert.equal(channel.videos[0].viewCount, 0);
+  assert.equal(channel.videos[1].viewCount, 1234567);
+  assert.equal(channel.videos[1].sourceUpdatedAt, '2026-10-02T00:00:00Z');
+  assert.equal(channel.videos[2].viewCount, null);
+  assert.match(channel.statisticsSource, /feeds\/videos.xml/);
+});
+
+test('blocked YouTube watch pages retain only verified metadata without inventing counts', async () => {
+  const get = async (url) => {
+    if (url.includes('oembed'))
+      return { html: JSON.stringify({ title: 'Public title', author_name: 'Creator' }) };
+    throw Error('Page blocked');
+  };
+  const result = await new ResearchAgent({ get }).page(
+    'https://www.youtube.com/watch?v=abcdefghijk',
+  );
+  assert.equal(result.video.viewCount, null);
+  assert.match(result.text, /could not be verified/);
+  await assert.rejects(
+    new ResearchAgent({
+      get: async () => {
+        throw Error('blocked');
+      },
+    }).page('https://www.youtube.com/watch?v=abcdefghijk'),
+    /blocked/,
+  );
+});
+
+test('context compression preserves actual counts, URLs and complete tool pairs without changing stored evidence', () => {
+  const context = new ContextManager();
+  const observation = JSON.stringify({
+    success: true,
+    sources: [
+      {
+        url: 'https://www.youtube.com/@creator',
+        text: 'Long description. '.repeat(2000),
+        videos: [
+          {
+            title: 'Latest video',
+            url: 'https://www.youtube.com/watch?v=abcdefghijk',
+            viewCount: 1234567,
+            publishedAt: '2026-10-01',
+            isShort: false,
+          },
+        ],
+      },
+    ],
+  });
+  const messages = [
+    { role: 'system', content: 'S'.repeat(1000) },
+    { role: 'user', content: 'How many views on the latest video?', _request: true },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        { id: 'a', function: { name: 'web_search', arguments: { query: 'creator latest video' } } },
+      ],
+    },
+    { role: 'tool', tool_call_id: 'a', content: observation },
+    { role: 'user', content: 'Answer from the observations.' },
+  ];
+  const selected = context.select(messages, 3500);
+  const tool = selected.find((m) => m.role === 'tool');
+  const data = JSON.parse(tool.content);
+  assert.ok(tool.content.length < 2300);
+  assert.equal(data.sources[0].videos[0].viewCount, 1234567);
+  assert.equal(data.sources[0].videos[0].url, 'https://www.youtube.com/watch?v=abcdefghijk');
+  assert.equal(data.contextTruncated, true);
+  assert.equal(messages[3].content, observation);
+  assert.ok(selected.some((m) => m._request));
+  assert.ok(selected.some((m) => m.tool_calls?.[0].id === tool.tool_call_id));
 });

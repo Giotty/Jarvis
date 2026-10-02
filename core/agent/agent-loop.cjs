@@ -40,6 +40,7 @@ class AgentLoop {
     this.request = text;
     this.sensitive = false;
     this.privateTask = false;
+    this.backgroundOnly = false;
     this.controller = new AbortController();
     this.safety.resume();
     this.executor.host?.beginTask?.();
@@ -97,23 +98,39 @@ class AgentLoop {
       this.emit('state', 'THINKING');
       this.active.stage = 'planning';
       this.save();
-      const schema = this.registry.schemas(this.loadedPlugins);
-      const reply = await this.ai.chat(
-        this.context.select(this.messages),
-        schema,
-        this.messages.some((m) => m.images?.length),
-        this.controller.signal,
-        (chunk) => {
-          if (!this.cancelled) this.emit('reply-chunk', chunk);
-        },
-        {
-          manualVision: false,
-          // Let the local model answer without tools when local preference is on.
-          // Tool continuations then use the configured primary brain; no phrase classification.
-          simple: this.active.steps.length === 0,
-          localOnly: this.privateTask,
-        },
+      const schema = this.registry
+        .schemas(this.loadedPlugins)
+        .filter((s) => !this.backgroundOnly || this.backgroundTool(s.function.name));
+      // Reserve room for tool definitions and the answer in the local context.
+      const budget = Math.min(
+        28000,
+        Math.max(4500, ((c.context || 8192) - 1536) * 3 - JSON.stringify(schema).length),
       );
+      const infer = (limit) =>
+        this.ai.chat(
+          this.context.select(this.messages, limit),
+          schema,
+          this.messages.some((m) => m.images?.length),
+          this.controller.signal,
+          (chunk) => {
+            if (!this.cancelled) this.emit('reply-chunk', chunk);
+          },
+          {
+            manualVision: false,
+            // Let the local model answer without tools when local preference is on.
+            // Tool continuations then use the configured primary brain; no phrase classification.
+            simple: this.active.steps.length === 0,
+            localOnly: this.privateTask,
+          },
+        );
+      let reply;
+      try {
+        reply = await infer(budget);
+      } catch (error) {
+        if (error.code !== 'context_overflow') throw error;
+        // A rejected prompt executed no tools. Retry once with smaller observations.
+        reply = await infer(Math.max(4500, Math.floor(budget * 0.6)));
+      }
       // Each fresh screenshot is sent once. Later rounds use observed controls
       // until the model explicitly requests another capture.
       for (const message of this.messages) delete message.images;
@@ -144,6 +161,30 @@ class AgentLoop {
         this.emit('reply', response);
         return;
       }
+      // The model declares research vs a requested desktop task on web_search.
+      // Default research is sticky: source failure cannot turn into browser control.
+      const backgroundSearch = calls.some((call) => {
+        try {
+          const args =
+            typeof call.function.arguments === 'string'
+              ? JSON.parse(call.function.arguments)
+              : call.function.arguments;
+          return (
+            call.function.name === 'web_search' &&
+            this.registry.validate('web_search', args).args.purpose !== 'desktop_task'
+          );
+        } catch {
+          return false;
+        }
+      });
+      if (backgroundSearch && !this.backgroundOnly) {
+        this.backgroundOnly = true;
+        this.messages.push({
+          role: 'user',
+          content:
+            'This is background research. Answer from public sources. Desktop/browser/screen actions are disabled for this task, including after source failure. If data is unavailable, say so; do not ask me to open a page.',
+        });
+      }
       this.emit('speech-abort', true);
       if (this.active.steps.length + calls.length > c.agentMaxSteps)
         throw Error('Task step limit reached.');
@@ -156,6 +197,13 @@ class AgentLoop {
           let args = call.function.arguments;
           if (typeof args === 'string') args = JSON.parse(args);
           action = this.registry.validate(call.function.name, args);
+          if (this.backgroundOnly && !this.backgroundTool(action.tool))
+            throw Object.assign(
+              Error(
+                'Background research cannot use desktop or screen tools. Read another public source or report unavailable information.',
+              ),
+              { code: 'background_scope' },
+            );
           const key = actionSignature(action.tool, action.args),
             old = this.active.steps.filter((s) => s.signature === key);
           if (
@@ -173,7 +221,10 @@ class AgentLoop {
             risk: 0,
             callId: call.id,
             status: 'failed',
-            result: failure(error, 'invalid_arguments', true),
+            result: {
+              ...failure(error, error.code || 'invalid_arguments', true),
+              ...(error.code === 'background_scope' ? { message: error.message } : {}),
+            },
           };
         }
         this.active.steps.push(action);
@@ -237,6 +288,10 @@ class AgentLoop {
       });
     }
     throw Error('Task step limit reached.');
+  }
+  backgroundTool(name) {
+    const { plugin, tool } = this.registry.find(name);
+    return tool.risk === 0 && (!plugin.builtin || ['research', 'toolkit'].includes(plugin.id));
   }
   async approval(action) {
     const frozen = structuredClone(action),

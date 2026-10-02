@@ -1,5 +1,14 @@
 # Verification
 
+## Background YouTube statistics — 0.2.4
+
+- JavaScript suite: **136 passed, 0 failed**; ESLint, TypeScript and Vite passed. Windows packaging verified all 62 application files against the build snapshot and produced executable/installer version 0.2.4.
+- The actual packaged app and configured local Ollama model answered “Analyze how many views the latest MrBeast video has.” in about 14 seconds, identifying the latest regular upload and approximately 87.4 million views. The follow-up “And how many views does his latest Short have?” completed in about 12 seconds with the latest Short and approximately 32 million views. Both tasks used only `web_search`, with actual public YouTube feed observations; no browser navigation, desktop input or screenshot tools executed. A separate source-level integration check also passed using the real model/network.
+- Channel feeds now retain public view counts, publication dates, source update dates and the distinction between Shorts and regular videos. Watch-page metadata reads only WatchAction counts, avoiding LikeAction counts. Missing/blocked statistics remain unavailable rather than becoming zero or fabricated numbers. Public counts can vary between cached responses and continue changing; retrieval time and entry update time do not guarantee live statistics. No API key or paid service was used.
+- Background `web_search` tasks have a host-enforced, sticky research scope: desktop/screen tools are removed from subsequent schemas and rejected even in the same batch. `purpose: desktop_task` remains available for explicitly requested opening/watching/interacting with results. Regression checks cover blocked browser/screen fallback, scope reset on the next request, and explicit research-then-open requests.
+- Local prompt budgeting reserves space for tool schemas and the answer. Large observations are shortened as structured JSON with a truncation flag, keeping counts/dates/URLs in retained records and preserving complete tool-call/result pairs and the current user request. A context-overflow rejection receives one smaller retry without repeating executed tools; tests cover bounded failure and recovery.
+- Saved voice, microphone, real-control and computer-wide file preferences were restored after the live checks. JARVIS was restarted without the temporary local debugging endpoint. Public-source availability remains a limit; this does not guarantee every website exposes all requested information.
+
 ## Background information and computer-wide search — 0.2.3
 
 - Final JavaScript suite: **130 passed, 0 failed**. Python suite: **21 passed, 0 failed**. ESLint, TypeScript and Vite build passed. Packaging verified 62 application files and generated the Windows 0.2.3 executable/installer.

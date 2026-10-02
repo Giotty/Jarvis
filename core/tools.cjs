@@ -99,10 +99,16 @@ const definitions = {
       .object({
         query: z.string().trim().min(1).max(500),
         topic: z.enum(['general', 'news', 'video']).default('general'),
+        purpose: z
+          .enum(['background', 'desktop_task'])
+          .default('background')
+          .describe(
+            'background for answering an information question (keeps desktop tools disabled for this task). desktop_task only when the user explicitly requests opening, watching or interacting with results.',
+          ),
       })
       .strict(),
     description:
-      'Research the public web IN THE BACKGROUND and read source pages without opening any browser or inspecting the screen. Use for current facts, stock information, public posts, movie updates, news and guides. Returns real URLs, source text, snippets and dates so you can answer directly with citations. Use get_weather for conditions/forecasts. Private login-only content may require a connected app.',
+      'Research websites IN THE BACKGROUND without opening any browser or inspecting the screen. Use for current facts, stock information, public posts, movie updates, news, guides and YouTube video statistics. YouTube channel sources include recent uploads, dates, viewCount snapshots and isShort. For latest creator videos search for their official YouTube channel, then read it using extract_page_text if needed. Answer directly with source links; never send the user to their browser if a source is blocked. purpose defaults to background; use desktop_task only for an explicitly requested desktop action involving results. Use get_weather for conditions/forecasts.',
   },
   get_weather: {
     risk: 0,
@@ -143,7 +149,7 @@ const definitions = {
     permission: 'browser',
     schema: z.object({ url: z.string().url() }).strict(),
     description:
-      'Read bounded text from a public web page. No private-network access, logins, forms or script execution. Returns source URL and date.',
+      'Read public website text in the background. YouTube channel URLs return recent uploads with publication dates, isShort and public viewCount snapshots; watch URLs return available video statistics. Missing counts are unavailable, not zero. No browser, logins, forms or script execution. Returns source URL and retrieval time.',
   },
   summarize_page: {
     risk: 0,

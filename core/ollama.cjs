@@ -42,7 +42,13 @@ class Ollama {
     });
     if (!r.ok) {
       const detail = await r.json().catch(() => ({}));
-      throw Error(`Ollama returned ${r.status}: ${detail.error || r.statusText}`);
+      const error = Error(`Ollama returned ${r.status}: ${detail.error || r.statusText}`);
+      if (
+        r.status === 400 &&
+        /exceeds.*context|context.*(?:exceeded|too (?:long|large))/i.test(detail.error || '')
+      )
+        error.code = 'context_overflow';
+      throw error;
     }
     if (!onDelta) return r.json();
     const decoder = new TextDecoder();

@@ -80,6 +80,24 @@ function extract(html, url) {
   const text = (main.length ? main : $('body')).text().replace(/\s+/g, ' ').trim().slice(0, 12000);
   return { url, title, text, publishedAt, untrusted: true, fetchedAt: Date.now() };
 }
+function publicCount(value) {
+  if (!/^\d+$/.test(String(value ?? ''))) return null;
+  const count = Number(value);
+  return Number.isSafeInteger(count) ? count : null;
+}
+function watchMetadata(html) {
+  const $ = cheerio.load(html);
+  let viewCount = null;
+  // LikeAction and WatchAction both have userInteractionCount. Only views count.
+  $('[itemprop="interactionStatistic"]').each((_, node) => {
+    if (/\/WatchAction$/.test($(node).find('[itemprop="interactionType"]').attr('content') || ''))
+      viewCount = publicCount($(node).find('[itemprop="userInteractionCount"]').attr('content'));
+  });
+  return {
+    viewCount,
+    publishedAt: $('meta[itemprop="datePublished"]').attr('content') || null,
+  };
+}
 class ResearchAgent {
   constructor({ get = webGet } = {}) {
     this.results = new Map();
@@ -97,7 +115,7 @@ class ResearchAgent {
               ...item,
               ...page,
               text: page.videos?.length
-                ? 'Public channel uploads and their publication dates are listed in videos below.'
+                ? 'Public channel uploads, publication dates and available view counts are listed in videos below. Shorts are identified separately. Counts are snapshots, not guaranteed live.'
                 : page.text.slice(0, 3000),
               ...(page.videos ? { videos: page.videos.slice(0, 8) } : {}),
               readable: Boolean(
@@ -121,9 +139,11 @@ class ResearchAgent {
     ].slice(0, 3);
     return {
       ...found,
+      // Do not repeat the same search snippets alongside full source observations.
+      results: sources.map(({ id, title, url }) => ({ id, title, url })),
       sources,
       message:
-        'Background research completed. Answer the user directly with citations to actual source URLs. Distinguish snippets from read pages. Fetched time is not publication time. For stock quotes verify the company, exchange and currency: a foreign listing is not interchangeable with the primary listing. Do not claim a live stock quote or a new post unless the source includes its timestamp; state delayed/stale data honestly. Do not ask the user to open a browser or read their screen.',
+        'Background research completed. Answer the user directly with actual source links. Distinguish snippets from read pages. For YouTube, latest regular video and latest Short can differ: identify which you mean using isShort and publishedAt. viewCount is a retrieved public snapshot; fetchedAt is retrieval time, not publication time or a guarantee of live statistics. Missing counts mean unavailable, never zero. For stocks verify company, exchange, currency and quote timestamp; report delayed data honestly. If sources are blocked or incomplete, try another background source or say what could not be verified. Do not open a browser or ask the user to read their screen.',
     };
   }
   async search(query, signal, video = false) {
@@ -211,20 +231,33 @@ class ResearchAgent {
     const parsed = new URL(url),
       id = videoId(parsed);
     if (id) {
-      const response = await this.get(
-        'https://www.youtube.com/oembed?format=json&url=' +
-          encodeURIComponent('https://www.youtube.com/watch?v=' + id),
-        signal,
-        'application/json',
-      );
-      const data = JSON.parse(response.html);
+      const canonical = 'https://www.youtube.com/watch?v=' + id;
+      const [metadata, watch] = await Promise.allSettled([
+        this.get(
+          'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(canonical),
+          signal,
+          'application/json',
+        ),
+        this.get(canonical, signal),
+      ]);
+      signal?.throwIfAborted();
+      if (metadata.status === 'rejected' && watch.status === 'rejected') throw metadata.reason;
+      const data = metadata.status === 'fulfilled' ? JSON.parse(metadata.value.html) : {};
+      const statistics =
+        watch.status === 'fulfilled'
+          ? watchMetadata(watch.value.html)
+          : { viewCount: null, publishedAt: null };
+      const title =
+        data.title ||
+        (watch.status === 'fulfilled' ? extract(watch.value.html, canonical).title : '');
       return {
-        success: true,
-        verified: true,
-        url: 'https://www.youtube.com/watch?v=' + id,
-        title: data.title,
-        text: `${data.title} — by ${data.author_name}. Public YouTube video metadata; publication date and contents are not supplied by oEmbed.`,
-        video: { id, title: data.title, author: data.author_name, authorUrl: data.author_url },
+        success: Boolean(title),
+        verified: Boolean(title),
+        url: canonical,
+        title,
+        text: `${title}${data.author_name ? ' — by ' + data.author_name : ''}. Public video metadata only, not a transcript. ${statistics.viewCount === null ? 'The public view count could not be verified; do not invent one.' : 'Public view-count snapshot: ' + statistics.viewCount + '.'}`,
+        ...(statistics.publishedAt ? { publishedAt: statistics.publishedAt } : {}),
+        video: { id, title, author: data.author_name, authorUrl: data.author_url, ...statistics },
         fetchedAt: Date.now(),
         untrusted: true,
       };
@@ -253,7 +286,15 @@ class ResearchAgent {
               url: xml(node).find('link[rel="alternate"]').attr('href'),
               publishedAt: xml(node).find('published').text(),
               author: xml(node).find('author name').text(),
-            }));
+              isShort: /\/shorts\//.test(
+                xml(node).find('link[rel="alternate"]').attr('href') || '',
+              ),
+              viewCount: publicCount(xml(node).find('media\\:statistics').attr('views')),
+              sourceUpdatedAt: xml(node).find('updated').text() || null,
+            }))
+            .sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0));
+          output.statisticsSource =
+            feed.url || 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId;
           output.text = JSON.stringify({
             channel: output.title,
             recentPublicUploads: output.videos,
@@ -281,4 +322,12 @@ function videoId(url) {
   }
   return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
 }
-module.exports = { ResearchAgent, extract, publicAddress, webGet, videoId };
+module.exports = {
+  ResearchAgent,
+  extract,
+  publicAddress,
+  webGet,
+  videoId,
+  publicCount,
+  watchMetadata,
+};
