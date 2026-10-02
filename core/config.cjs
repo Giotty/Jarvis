@@ -3,6 +3,88 @@ const schema = z
   .object({
     setupComplete: z.boolean().default(false),
     mock: z.boolean().default(true),
+    provider: z.enum(['ollama', 'openai', 'anthropic']).default('ollama'),
+    fallbackProvider: z.enum(['none', 'ollama', 'openai', 'anthropic']).default('ollama'),
+    cloudEnabled: z.boolean().default(false),
+    preferLocalSimple: z.boolean().default(false),
+    cloudVision: z.enum(['disabled', 'manual', 'when-needed']).default('disabled'),
+    cloudScreen: z.boolean().default(false),
+    cloudClipboard: z.boolean().default(false),
+    cloudFiles: z.boolean().default(false),
+    openaiUrl: z
+      .string()
+      .url()
+      .refine((v) => new URL(v).protocol === 'https:')
+      .default('https://api.openai.com/v1'),
+    openaiModel: z.string().max(200).default(''),
+    openaiVisionModel: z.string().max(200).default(''),
+    anthropicModel: z.string().max(200).default(''),
+    providerCapabilities: z
+      .record(z.array(z.enum(['TEXT', 'VISION', 'TOOLS', 'STRUCTURED_OUTPUT', 'STREAMING'])))
+      .default({}),
+    agentMaxSteps: z.number().int().min(1).max(64).default(24),
+    agentRetries: z.number().int().min(0).max(3).default(2),
+    toolTimeout: z.number().int().min(1000).max(120000).default(30000),
+    providerTimeout: z.number().int().min(1000).max(120000).default(45000),
+    agentTaskTimeout: z.number().int().min(10000).max(600000).default(180000),
+    parallelTools: z.boolean().default(true),
+    automaticRecovery: z.boolean().default(true),
+    cloudRequestLimit: z.number().int().min(0).max(10000).default(0),
+    pluginEnabled: z.record(z.boolean()).default({}),
+    mcpServers: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/),
+            name: z.string().min(1).max(100),
+            transport: z.enum(['stdio', 'http']),
+            command: z.string().max(1000).default(''),
+            args: z.array(z.string().max(2000)).max(30).default([]),
+            url: z.string().max(2000).default(''),
+            permissions: z
+              .array(
+                z.enum([
+                  'SCREEN_READ',
+                  'MOUSE_CONTROL',
+                  'KEYBOARD_CONTROL',
+                  'FILES_READ',
+                  'FILES_WRITE',
+                  'BROWSER_CONTROL',
+                  'EMAIL_READ',
+                  'EMAIL_SEND',
+                  'CALENDAR_READ',
+                  'CALENDAR_WRITE',
+                  'SYSTEM_CONTROL',
+                  'PROCESS_CONTROL',
+                  'NETWORK',
+                ]),
+              )
+              .default([]),
+          })
+          .strict(),
+      )
+      .max(20)
+      .refine(
+        (servers) =>
+          new Set(servers.map((s) => s.id)).size === servers.length &&
+          servers.every(
+            (s) =>
+              ![
+                'windows',
+                'screen',
+                'browser',
+                'files',
+                'research',
+                'steam',
+                'roblox',
+                'system',
+                'memory',
+                'toolkit',
+              ].includes(s.id),
+          ),
+        'Use unique external plugin IDs, distinct from built-ins',
+      )
+      .default([]),
     ollamaUrl: z
       .string()
       .url()

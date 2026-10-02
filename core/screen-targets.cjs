@@ -54,6 +54,7 @@ class ScreenTargets {
       this.pending.set(review.id, {
         review,
         window,
+        control: located,
         fingerprint: this.fingerprint(frame, located),
         expires: Date.now() + 60000,
       });

@@ -1,5 +1,8 @@
 function publicError(error) {
   const message = String(error?.message || error || '');
+  if (/AI provider|missing_key|missing_model/i.test(message))
+    return 'AI connection unavailable. Check the provider, model and saved key in Settings, or select Ollama.';
+  if (/step limit/i.test(message)) return 'I reached the task limit. Please check the result before continuing.';
   if (error?.issues?.some((issue) => issue.path?.includes('query')))
     return 'I wasn’t sure what you wanted me to search for.';
   if (/combat/i.test(message))

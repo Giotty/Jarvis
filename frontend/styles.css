@@ -9,6 +9,46 @@
   --line: #173a4a;
   --mono: 'Consolas', monospace;
 }
+.provider-card,
+.plugin-card {
+  border: 1px solid var(--line);
+  padding: 16px;
+  margin: 16px 0;
+  background: #07121e;
+}
+.plugin-manager {
+  padding: 18px;
+}
+.plugin-tool {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  font-size: 12px;
+}
+.plugin-tool p {
+  color: #82a9b8;
+}
+.plugin-manager pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+}
+.mcp-config {
+  width: 100%;
+  min-height: 180px;
+  font-family: var(--mono);
+  margin: 14px 0;
+}
+.credential-row {
+  margin-bottom: 12px;
+}
+details summary {
+  cursor: pointer;
+  padding: 12px 0;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 11px;
+}
 * {
   box-sizing: border-box;
 }

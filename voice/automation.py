@@ -65,6 +65,9 @@ def execute(tool, args):
     if tool == 'list_windows':
         from windows_context import windows
         return {'windows': windows()}
+    if tool == 'prepare_desktop':
+        from windows_context import prepare_desktop
+        return prepare_desktop(args['excludedPid'], args.get('preferredHwnd'))
     if tool == 'list_installed_games':
         from installed_games import installed
         return installed()
@@ -94,7 +97,7 @@ def execute(tool, args):
         return locate(args['label'])
     if tool in ['type_text', 'fill_search']:
         from accessibility import fill
-        return fill(args['text'], args.get('label'), search=tool == 'fill_search', allow_sensitive=args.get('allowSensitive', False))
+        return fill(args['text'], args.get('label'), search=tool == 'fill_search', allow_sensitive=args.get('allowSensitive', False), allow_mouse_focus=args.get('allowMouseFocus', False))
     if tool == 'navigate_ui':
         from accessibility import navigate
         return navigate(args['label'])

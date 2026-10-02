@@ -210,7 +210,7 @@ const definitions = {
     permission: 'browser',
     schema: z.object({ index: z.number().int().min(1).max(10) }).strict(),
     description:
-      'Open the first/second/etc visible YouTube video from the current browser page. Uses real accessible video links, never guessed coordinates. Automatic navigation; prefer over locate_ui_element for ordinal video requests.',
+      'Open the first/second/etc visible YouTube video from the current browser page. Uses real accessible video links, never guessed coordinates. Automatic navigation; prefer over generic click tools and screenshot coordinates for ordinal YouTube video requests.',
   },
   search_web: {
     risk: 1,
@@ -610,6 +610,7 @@ function pythonCall(config, script, payload, timeout = 30000, signal) {
     }
     const child = spawn(config.pythonPath, [script], {
       windowsHide: true,
+      env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let output = '',
@@ -684,14 +685,14 @@ class Executor {
   async observe(signal) {
     return this.host.observe(signal);
   }
-  async prepare(action, signal) {
+  async prepare(action, signal, selectorGoal) {
     const a = validate(action);
     if (!['click_visible_target', 'click_control'].includes(a.tool)) return;
     if (!this.config().mouse) throw Error('mouse control is disabled.');
     if (this.config().mock) return;
     return a.tool === 'click_control'
-      ? this.host.prepareControl(a.args.id, signal)
-      : this.host.prepareTarget(a.args.label, signal);
+      ? this.host.prepareControl(a.args.id, signal, selectorGoal)
+      : this.host.prepareTarget(selectorGoal || a.args.label, signal);
   }
   async executeResult(action, signal) {
     const { result, failure } = require('./agent-errors.cjs');
@@ -776,6 +777,7 @@ class Executor {
     )
       return { mock: true, message: `Simulated ${a.tool}; no PC input or file changes.` };
     const p = a.args;
+    if (['type_text', 'fill_search'].includes(a.tool)) p.allowMouseFocus = c.mouse === true;
     if (a.tool === 'type_text') p.allowSensitive = action.risk >= 2;
     switch (a.tool) {
       case 'enable_tools':

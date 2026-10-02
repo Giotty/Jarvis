@@ -91,7 +91,8 @@ test('general PowerShell, file overwrites and executable paths always retain cri
   await planner.command('Run the requested PowerShell settings change');
   assert.equal(planner.active.status, 'waiting');
   assert.equal(executions, 0);
-  await assert.rejects(planner.confirm([...safety.pending.keys()][0], false), /denied/);
+  await planner.confirm([...safety.pending.keys()][0], false);
+  assert.equal(planner.active.status, 'cancelled');
   assert.equal(executions, 0);
 });
 test('ordinary conversation skips tool-schema prefill and streams speech; computer questions keep tools', async () => {

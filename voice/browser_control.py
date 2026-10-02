@@ -14,7 +14,7 @@ def address_control(root):
     # Never accept a web-page form field as the trusted browser address bar.
     stack = [(root, 0)]
     count = 0
-    while stack and count < 240 and time.monotonic() - began < 1.5:
+    while stack and count < 500 and time.monotonic() - began < 2.5:
         control, depth = stack.pop()
         count += 1
         try:
@@ -28,7 +28,7 @@ def address_control(root):
                     'omnibox' in control.AutomationId.casefold() or
                     urlparse(content if '://' in content else 'https://' + content).hostname and '.' in content.split('/')[0]):
                     return control
-            if depth < 7:
+            if depth < 14:
                 stack.extend((child, depth + 1) for child in reversed(control.GetChildren()))
         except Exception:
             continue

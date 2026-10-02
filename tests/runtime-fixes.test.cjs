@@ -9,6 +9,7 @@ function planner(ollama, executor, events = []) {
   return new Planner({
     ollama,
     executor,
+    config: () => ({ websiteAliases: { youtube: 'https://www.youtube.com/' } }),
     safety: new Safety(),
     store: { task() {} },
     emit: (type, data) => events.push({ type, data }),
@@ -35,7 +36,7 @@ test('STOP aborts an in-flight model request and allows the next command', async
   p.cancel();
   await pending;
   assert.equal(p.busy, false);
-  await p.command('Open Roblox');
+  await p.command('Open YouTube');
   assert.equal(p.active.status, 'completed');
 });
 test('direct Roblox launch retains permissions and mock safety without model calls', async () => {
@@ -56,6 +57,7 @@ test('direct Roblox launch retains permissions and mock safety without model cal
     executor,
     events,
   );
+  executor.apps.all = async () => [{ Name: 'Roblox', AppID: 'Roblox' }];
   await p.command('Open Roblox');
   assert.equal(p.active.status, 'failed');
   allowed = true;

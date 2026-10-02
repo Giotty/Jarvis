@@ -1,5 +1,5 @@
 // Restore the assistant even when an input worker or vision lookup fails.
-function targetWindow(getWindow, delay = () => new Promise((r) => setTimeout(r, 250))) {
+function targetWindow(getWindow, delay = () => new Promise((r) => setTimeout(r, 250)), prepare) {
   let depth = 0;
   let restore = false;
   return async (action) => {
@@ -10,6 +10,7 @@ function targetWindow(getWindow, delay = () => new Promise((r) => setTimeout(r, 
     }
     try {
       if (restore) await delay();
+      if (depth === 1) await prepare?.();
       return await action();
     } finally {
       if (--depth === 0 && restore && win && !win.isDestroyed()) {

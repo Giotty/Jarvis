@@ -10,6 +10,18 @@ class Store {
     this.db.run(
       'CREATE TABLE IF NOT EXISTS memory(id INTEGER PRIMARY KEY, category TEXT NOT NULL, content TEXT NOT NULL); CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, data TEXT NOT NULL);',
     );
+    // A process restart cannot resume an old action or an old approval.
+    for (const task of this.tasks()) {
+      if (!['running', 'waiting'].includes(task.status)) continue;
+      task.status = 'cancelled';
+      task.finished = Date.now();
+      task.steps
+        .filter((step) => ['pending', 'running', 'waiting'].includes(step.status))
+        .forEach((step) => {
+          step.status = 'cancelled';
+        });
+      this.task(task);
+    }
     return this;
   }
   rows(sql, params = []) {

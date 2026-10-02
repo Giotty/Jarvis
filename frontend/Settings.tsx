@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Config, Diagnostics, unwrap } from './types';
+import { PluginManager, ProviderSettings } from './AgentSettings';
 type Props = {
   config: Config;
   models: string[];
   save: (c: Config) => Promise<void>;
   refresh: () => void;
 };
-export function Settings({ config, models, save, refresh }: Props) {
+export function Settings({ config, save }: Props) {
   const [draft, setDraft] = useState(config),
     [section, setSection] = useState('GENERAL'),
     [error, setError] = useState(''),
@@ -73,7 +74,18 @@ export function Settings({ config, models, save, refresh }: Props) {
   return (
     <div className="settings-layout">
       <aside className="subnav">
-        {['GENERAL', 'AI', 'VOICE', 'VISION', 'AUTOMATION', 'PRIVACY', 'SAFETY'].map((s) => (
+        {[
+          'GENERAL',
+          'AI PROVIDERS',
+          'PLUGINS',
+          'AGENT',
+          'USAGE',
+          'VOICE',
+          'VISION',
+          'PERMISSIONS',
+          'PRIVACY',
+          'SAFETY',
+        ].map((s) => (
           <button className={section === s ? 'active' : ''} key={s} onClick={() => setSection(s)}>
             {s}
           </button>
@@ -93,17 +105,47 @@ export function Settings({ config, models, save, refresh }: Props) {
             {select('proactive', 'Proactive assistance', ['off', 'low', 'normal'])}
           </>
         )}
-        {section === 'AI' && (
+        {section === 'AI PROVIDERS' && (
           <>
-            {input('ollamaUrl', 'Local Ollama URL')}
-            {select('model', 'Conversation model', ['', ...models])}
-            {select('visionModel', 'Vision model', ['', ...models])}
-            <button onClick={refresh}>REFRESH INSTALLED MODELS</button>
+            <ProviderSettings draft={draft} update={update} save={save} />
             {input('temperature', 'Temperature', 'number', 0, 2)}
             {input('context', 'Context length', 'number', 1024, 131072)}
             <p className="help">
               Choose a model with tool support for PC tasks and a vision-capable model for screen
               analysis. Models are never downloaded automatically.
+            </p>
+          </>
+        )}
+        {section === 'PLUGINS' && <PluginManager config={config} save={save} />}
+        {section === 'AGENT' && (
+          <>
+            {input('agentMaxSteps', 'Maximum task steps', 'number', 1, 64)}
+            {input('agentRetries', 'Maximum retries per action', 'number', 0, 3)}
+            {input('toolTimeout', 'Tool timeout / milliseconds', 'number', 1000, 120000)}
+            {input('providerTimeout', 'Provider timeout / milliseconds', 'number', 1000, 120000)}
+            {input('agentTaskTimeout', 'Task deadline / milliseconds', 'number', 10000, 600000)}
+            {toggle('parallelTools', 'Parallel independent read-only tools')}
+            {toggle('automaticRecovery', 'Recover from failed steps')}
+          </>
+        )}
+        {section === 'USAGE' && (
+          <>
+            {toggle(
+              'cloudEnabled',
+              'Enable cloud AI',
+              'Requests may incur provider charges. Disable for fully local operation.',
+            )}
+            {toggle('preferLocalSimple', 'Prefer local when no action tools are enabled')}
+            {input(
+              'cloudRequestLimit',
+              'Session cloud request limit (0 = unlimited)',
+              'number',
+              0,
+              10000,
+            )}
+            <p className="help">
+              The HUD shows session requests, provider, model and reported tokens. Token counts are
+              not a bill or a dollar estimate.
             </p>
           </>
         )}
@@ -118,7 +160,7 @@ export function Settings({ config, models, save, refresh }: Props) {
             {toggle(
               'conversationMode',
               'Hands-free live conversation',
-              'Keep listening through replies; speak to interrupt. Pause with the microphone button. Simple named navigation may start before you finish speaking.',
+              'Keep listening through replies; speak to interrupt. Pause with the microphone button. Complete requests use the same agent as typed messages.',
             )}
             {input('sttModelPath', 'Downloaded Whisper model folder')}
             {select('ttsEngine', 'Local speech engine', ['kokoro', 'piper', 'windows'])}
@@ -207,7 +249,7 @@ export function Settings({ config, models, save, refresh }: Props) {
             </p>
           </>
         )}
-        {section === 'AUTOMATION' && (
+        {section === 'PERMISSIONS' && (
           <>
             {toggle('mock', 'Mock mode', 'All PC input and file mutations are simulated.')}
             {toggle('mouse', 'Allow mouse control')}
@@ -266,10 +308,23 @@ export function Settings({ config, models, save, refresh }: Props) {
           <>
             {toggle('microphone', 'Microphone access')}
             {toggle('memory', 'Explicit local memory')}
+            {toggle(
+              'cloudScreen',
+              'Allow screen images to cloud AI',
+              'Background screen monitoring always stays local.',
+            )}
+            {select('cloudVision', 'Cloud vision', ['disabled', 'manual', 'when-needed'])}
+            {toggle('cloudClipboard', 'Allow clipboard contents to cloud AI')}
+            {toggle('cloudFiles', 'Allow file contents to cloud AI')}
+            <p className="help">
+              Cloud providers receive your requests, public research, visible accessibility text,
+              window titles and notes you explicitly retrieve. Screen-image sharing controls
+              pictures. Restricted file/clipboard results stay local.
+            </p>
             <p className="help">
               Conversation text, screenshots, clipboard contents and tool arguments are never
-              written to audit logs. Memories are saved only through the Memory page. SQLite is
-              local and unencrypted.
+              written to audit logs. Memories are saved through the Memory page or explicit approved
+              tools. SQLite is local and unencrypted.
             </p>
           </>
         )}
@@ -298,7 +353,7 @@ export function Settings({ config, models, save, refresh }: Props) {
               Windows permissions still apply, and elevation needs Windows UAC.
             </p>
             <p className="danger-text">
-              EMERGENCY STOP: CTRL + SHIFT + ESCAPE
+              EMERGENCY STOP: CTRL + SHIFT + BACKSPACE
               <br />
               PyAutoGUI also stops when the pointer reaches a screen corner.
             </p>

@@ -126,6 +126,7 @@ test('screen questions receive a screenshot before inference, and profile clicks
     executed = false;
   const click = planner(
     {
+      observe: async () => ({ image: 'fixture', context: { title: 'Steam' } }),
       prepare: async () => {
         prepared = true;
         return { id: 'target', label: 'Account A', windowTitle: 'Steam', x: 150, y: 200 };
@@ -137,9 +138,16 @@ test('screen questions receive a screenshot before inference, and profile clicks
       },
     },
     {
-      chat: () => {
-        throw Error('Should not use text-only inference for a profile click.');
-      },
+      chat: async (messages) =>
+        messages.some((m) => m.role === 'tool')
+          ? { content: 'Clicked Account A.' }
+          : {
+              tool_calls: [
+                {
+                  function: { name: 'click_visible_target', arguments: { label: 'first profile' } },
+                },
+              ],
+            },
     },
   );
   await click.command('Open the first profile');

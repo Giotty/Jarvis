@@ -128,6 +128,15 @@ def open_result(index):
             if not legacy:
                 raise RuntimeError('This browser did not expose an accessible video action. No click was performed.')
             legacy.DoDefaultAction()
+    if selected['url']:
+        from browser_control import state
+        for _ in range(3):
+            time.sleep(.25)
+            actual=next((w for w in state()['windows'] if watch_url(w.get('url',''))==selected['url']),None)
+            if actual:
+                return {'dispatched':True,'verified_target':True,'verified':True,'playback_verified':False,
+                        'observed_result':actual,'url':selected['url'],'title':selected['name'],
+                        'message':f"Opened video {index}: {selected['name'] or 'YouTube video'}."}
     return {'dispatched': True, 'verified_target': True, 'playback_verified': False,
             'url': selected['url'], 'title': selected['name'],
             'message': f"Opened video {index}: {selected['name'] or 'YouTube video'}. Playback has not been verified."}

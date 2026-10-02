@@ -10,6 +10,8 @@ class SpeechWorker {
     this.prepared = null;
     this.epoch = 0;
     this.queue = Promise.resolve();
+    this.stderr = '';
+    this.deviceOverride = null;
   }
   stop() {
     this.epoch++;
@@ -39,10 +41,12 @@ class SpeechWorker {
     this.executable = c.pythonPath;
     const child = spawn(c.pythonPath, [this.script], {
       windowsHide: true,
+      env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
     this.buffer = '';
+    this.stderr = '';
     child.stdout.on('data', (data) => {
       if (this.child !== child) return;
       this.buffer += data;
@@ -61,7 +65,9 @@ class SpeechWorker {
         p.reject(Error('Invalid speech response.'));
       }
     });
-    child.stderr.on('data', () => {});
+    child.stderr.on('data', (data) => {
+      this.stderr = (this.stderr + data).slice(-4000);
+    });
     child.stdin.on('error', () => {
       if (this.child === child) this.stop();
     });
@@ -72,11 +78,19 @@ class SpeechWorker {
       if (this.child === child) this.stop();
     });
   }
-  request(payload) {
+  request(payload, timeout = 45000) {
     if (this.pending) return Promise.reject(Error('Local voice worker is still processing.'));
     this.start();
     return new Promise((resolve, reject) => {
-      this.pending = { resolve, reject, timer: setTimeout(() => this.stop(), 180000) };
+      this.pending = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.pending = null;
+          reject(Error(`Local voice request timed out. ${this.stderr.slice(-800)}`));
+          this.stop();
+        }, timeout),
+      };
       this.child.stdin.write(JSON.stringify(payload) + '\n');
     });
   }
@@ -86,16 +100,42 @@ class SpeechWorker {
       model: c.sttModel,
       modelPath: c.sttModelPath,
       language: c.sttLanguage,
-      device: c.sttDevice,
+      device: c.sttDevice === 'auto' ? this.deviceOverride || 'auto' : c.sttDevice,
     };
   }
   prepare(payload = this.settings()) {
-    if (!this.prepared) this.prepared = this.request({ ...payload, operation: 'prepare' });
+    if (!this.prepared) {
+      const pending = this.request({ ...payload, operation: 'prepare' }, 60000);
+      this.prepared = pending;
+      void pending.catch(() => {
+        if (this.prepared === pending) this.prepared = null;
+      });
+    }
     return this.prepared;
   }
   async transcribe(audio) {
-    if (this.prepared) await this.prepared;
-    return this.request({ audio, ...this.settings(), hotwords: this.config().speechHints || '' });
+    try {
+      if (this.prepared) await this.prepared;
+      return await this.request(
+        { audio, ...this.settings(), hotwords: this.config().speechHints || '' },
+        25000,
+      );
+    } catch (error) {
+      if (
+        this.settings().device !== 'cpu' &&
+        this.config().sttDevice === 'auto' &&
+        /CUDA|cudnn|cublas|out of memory|timed out/i.test(error.message)
+      ) {
+        this.stop();
+        this.deviceOverride = 'cpu';
+        await this.prepare();
+        return this.request(
+          { audio, ...this.settings(), hotwords: this.config().speechHints || '' },
+          25000,
+        );
+      }
+      throw error;
+    }
   }
   async synthesize(text, payload) {
     // Barge-in discards playback, not this warmed model. Serialize requests

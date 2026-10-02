@@ -6,6 +6,12 @@ release-final/
 __pycache__/
 .env
 .env.*
+secrets*.json
+credentials*/
+token-cache*/
+tokens*.json
+*.token
+auth.json
 !.env.example
 *.db
 *.sqlite*

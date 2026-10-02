@@ -12,15 +12,37 @@ test('YouTube request performs a real encoded search without approval or misplac
     events = [];
   const executor = new Executor({
     config: () => ({ browser: true, mock: false }),
-    host: { openUrl: async (url) => calls.push(url) },
+    host: {
+      browser: {
+        open: async (url) => {
+          calls.push(url);
+          return { success: true, verified: true, observed_result: { url } };
+        },
+      },
+    },
     audit: { write() {} },
   });
   const p = new Planner({
     executor,
     ollama: {
-      chat: () => {
-        throw Error('No model needed');
-      },
+      chat: async (messages) =>
+        messages.at(-1).role === 'user' && !messages.some((m) => m.role === 'tool')
+          ? {
+              tool_calls: [
+                {
+                  function: {
+                    name: 'search_web',
+                    arguments: {
+                      site: 'youtube',
+                      query: messages.at(-1).content.includes('MrBeast')
+                        ? 'MrBeast'
+                        : 'cats & dogs',
+                    },
+                  },
+                },
+              ],
+            }
+          : { content: 'Search results are open.' },
     },
     safety: new Safety(),
     store: { task() {} },
@@ -57,7 +79,11 @@ test('multi-step requests reach the planner rather than losing actions in a sear
 });
 test('dangerous actions retain confirmation; automatic typing cannot become a message-send tool', async () => {
   assert.equal(validate({ tool: 'fill_search', args: { text: 'MrBeast' } }).risk, 1);
-  assert.equal(validate({ tool: 'type_text', args: { text: 'a message' } }).risk, 2);
+  assert.equal(validate({ tool: 'type_text', args: { text: 'a message' } }).risk, 1);
+  assert.equal(
+    validate({ tool: 'type_text', args: { text: 'a command', confirmSensitive: true } }).risk,
+    2,
+  );
   assert.equal(validate({ tool: 'hotkey', args: { keys: ['enter'] } }).risk, 2);
   assert.equal(validate({ tool: 'delete_file', args: { path: 'x' } }).risk, 3);
   assert.throws(() => validate({ tool: 'navigate_ui', args: { label: 'Send' } }));

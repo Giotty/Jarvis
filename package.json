@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local-first Windows AI desktop assistant",
   "author": "JARVIS contributors",
@@ -17,6 +17,8 @@
     "portable": "pnpm build && node scripts/package.cjs --portable"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "ajv": "8.20.0",
     "cheerio": "1.1.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

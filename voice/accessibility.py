@@ -5,7 +5,16 @@ def controls():
     import uiautomation as ui
     root = ui.GetForegroundControl()
     began = time.monotonic()
-    for index, (control, _) in enumerate(ui.WalkControl(root, includeTop=False, maxDepth=10)):
+    # A modal account/form dialog owns input; background-page controls must not
+    # crowd its controls out of the bounded scan or be mistaken for targets.
+    for index, (candidate, _) in enumerate(ui.WalkControl(root, includeTop=False, maxDepth=12)):
+        if index >= 250 or time.monotonic()-began > .7: break
+        try:
+            if candidate.ControlTypeName == 'DialogControl' and candidate.IsEnabled and not candidate.IsOffscreen:
+                root=candidate
+                break
+        except Exception:continue
+    for index, (control, _) in enumerate(ui.WalkControl(root, includeTop=False, maxDepth=22)):
         if index >= 500 or time.monotonic() - began > 3:
             break
         try:
@@ -14,10 +23,19 @@ def controls():
         except Exception:
             continue
 
+EDIT_TYPES = ['EditControl', 'ComboBoxControl']
+
+def search_label(label):
+    import re
+    return bool(re.search(r'\b(?:search|recherche|rechercher|rech\.?|buscar|suche|suchen|cerca|ricerca)\b', label, re.I))
+
 def find_edit(label):
-    edits = [c for c in controls() if c.ControlTypeName == 'EditControl' and not c.IsPassword]
+    edits = [c for c in controls() if c.ControlTypeName in EDIT_TYPES and not c.IsPassword]
     exact = [c for c in edits if c.Name.casefold() == label.casefold()]
     matches = exact or [c for c in edits if label.casefold() in c.Name.casefold()]
+    if not matches and search_label(label):
+        # Match the real editable page field, excluding the browser omnibox.
+        matches = [c for c in edits if search_label(c.Name) and not any(term in c.Name.casefold() for term in ['address', 'adresse', 'url'])]
     if len(matches) != 1:
         raise RuntimeError('Could not identify a unique edit field. Read the UI controls and use the exact field name.')
     return matches[0]
@@ -56,10 +74,22 @@ def sensitive_destination(application, label):
             'wsl.exe', 'bash.exe', 'mintty.exe', 'conhost.exe'] or
             bool(re.search(r'\b(?:terminal|console|command|powershell|password|credit card|card number|security code|payment|registry|administrator)\b', label, re.I)))
 
-def fill(text, label=None, search=False, allow_sensitive=False):
+def focus_within(control, ui):
+    if control.HasKeyboardFocus: return True
+    try:
+        identity=control.GetRuntimeId()
+        focused=ui.GetFocusedControl()
+        for _ in range(5):
+            if not focused:break
+            if focused.GetRuntimeId()==identity:return True
+            focused=focused.GetParentControl()
+    except Exception:pass
+    return False
+
+def fill(text, label=None, search=False, allow_sensitive=False, allow_mouse_focus=False):
     import uiautomation as ui
     control = find_edit(label) if label else ui.GetFocusedControl()
-    if control.ControlTypeName != 'EditControl' or control.IsPassword:
+    if control.ControlTypeName not in EDIT_TYPES or control.IsPassword:
         raise RuntimeError('No editable destination is focused. Identify and focus the target field first.')
     from automation import foreground
     window = foreground()
@@ -68,14 +98,28 @@ def fill(text, label=None, search=False, allow_sensitive=False):
                 'retryable': True, 'required_arguments': {'confirmSensitive': True},
                 'message': 'This is a command or sensitive field. Confirmation is needed before typing there.'}
     # The automatic path is limited to visibly named search fields, never arbitrary forms.
-    if search and 'search' not in control.Name.casefold():
+    if search and not search_label(control.Name):
         raise RuntimeError('Automatic typing is only allowed in a verified Search field.')
     pattern = control.GetValuePattern()
     if not pattern or pattern.IsReadOnly:
         raise RuntimeError('This field cannot be edited and verified using Windows accessibility.')
     value = text if search else pattern.Value + text
     control.SetFocus()
-    if not control.HasKeyboardFocus:
+    time.sleep(.08)
+    if not focus_within(control,ui) and allow_mouse_focus:
+        if foreground()['hwnd'] != window['hwnd']:
+            raise RuntimeError('The target window changed; no text was inserted.')
+        bounds=control.BoundingRectangle
+        rect=window['bounds']
+        x=int((bounds.left+bounds.right)/2);y=int((bounds.top+bounds.bottom)/2)
+        if not (bounds.right>bounds.left and bounds.bottom>bounds.top and
+                rect['x'] <= x < rect['x']+rect['width'] and rect['y'] <= y < rect['y']+rect['height']):
+            raise RuntimeError('The edit field is outside the target window; no click was performed.')
+        import pyautogui as pg
+        pg.FAILSAFE=True
+        pg.click(x,y)
+        time.sleep(.12)
+    if not focus_within(control,ui):
         raise RuntimeError('The target field did not receive focus; no text was inserted.')
     if foreground()['hwnd'] != window['hwnd']:
         raise RuntimeError('The target window changed; no text was inserted.')
@@ -85,6 +129,12 @@ def fill(text, label=None, search=False, allow_sensitive=False):
     return {'success': True, 'verified': True, 'field': control.Name, 'characters': len(text), 'submitted': False}
 
 def navigate(label):
+    from automation import foreground
+    window=foreground()
+    before=None
+    from browser_control import BROWSERS, state as browser_state
+    if window['application'] in BROWSERS:
+        before=next((w for w in browser_state()['windows'] if w['hwnd']==window['hwnd']),None)
     if label not in ['Search', 'Home', 'Back', 'Forward', 'Library', 'Explore', 'Subscriptions', 'Games', 'Videos']:
         raise RuntimeError('This navigation action is not automatic.')
     matches = [c for c in controls() if c.Name.casefold() == label.casefold()
@@ -92,7 +142,15 @@ def navigate(label):
     if len(matches) != 1:
         raise RuntimeError('No unique accessible navigation control found; no click was performed.')
     bounds = matches[0].BoundingRectangle
+    if foreground()['hwnd'] != window['hwnd']:
+        raise RuntimeError('The target window changed; no navigation click was performed.')
     import pyautogui as pg
     pg.FAILSAFE = True
     pg.click(int((bounds.left + bounds.right) / 2), int((bounds.top + bounds.bottom) / 2))
+    if before:
+        time.sleep(.3)
+        after=next((w for w in browser_state()['windows'] if w['hwnd']==window['hwnd']),None)
+        if after and after.get('url') and after['url'] != before.get('url'):
+            return {'dispatched':True,'control':label,'verified_target':True,'page_change_verified':True,
+                    'verified':True,'observed_result':after,'message':'The browser navigated to the requested page.'}
     return {'dispatched': True, 'control': label, 'verified_target': True, 'page_change_verified': False}

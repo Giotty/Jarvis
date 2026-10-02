@@ -117,7 +117,7 @@ function plannerFixture(calls) {
 test('planner pauses at each important action and resumes only on approval', async () => {
   const { p, events, executed } = plannerFixture([
     ['open_url', { url: 'https://example.com' }],
-    ['type_text', { text: 'reply' }],
+    ['type_text', { text: 'reply', confirmSensitive: true }],
     ['hotkey', { keys: ['enter'] }],
   ]);
   await p.command('write reply');
@@ -132,17 +132,18 @@ test('planner pauses at each important action and resumes only on approval', asy
 });
 test('denied action stops the remaining plan', async () => {
   const { p, events, executed } = plannerFixture([
-    ['type_text', { text: 'a' }],
+    ['type_text', { text: 'a', confirmSensitive: true }],
     ['open_url', { url: 'https://example.com' }],
   ]);
-  await p.command('test');
-  await assert.rejects(p.confirm(events.find((e) => e.type === 'confirmation').data.id, false));
+  await p.command('type the requested text');
+  await p.confirm(events.find((e) => e.type === 'confirmation').data.id, false);
   assert.equal(p.active.status, 'cancelled');
   assert.deepEqual(executed, []);
 });
 test('invalid model tool cannot execute', async () => {
   const { p, executed } = plannerFixture([['unknown', {}]]);
-  await assert.rejects(p.command('test'), /Unknown tool/);
+  await p.command('execute the requested action');
+  assert.equal(p.active.steps[0].status, 'failed');
   assert.deepEqual(executed, []);
 });
 test('unchanged vision frames do not trigger additional inference', async () => {

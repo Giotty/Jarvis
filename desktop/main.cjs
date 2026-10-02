@@ -11,18 +11,22 @@ const {
   screen,
   globalShortcut,
   dialog,
+  safeStorage,
 } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { z } = require('zod');
-const { schema, defaults } = require('../core/config.cjs');
+const { schema } = require('../core/config.cjs');
 const { Store } = require('../core/store.cjs');
 const { Audit } = require('../core/log.cjs');
 const { Ollama } = require('../core/ollama.cjs');
 const { telemetry } = require('../core/telemetry.cjs');
 const { Safety } = require('../core/safety.cjs');
 const { Executor, pythonCall } = require('../core/tools.cjs');
-const { Planner } = require('../core/planner.cjs');
+const { AgentLoop } = require('../core/agent/agent-loop.cjs');
+const { ProviderRouter } = require('../core/providers/router.cjs');
+const { SecretStore } = require('../core/providers/secrets.cjs');
+const { PluginRegistry } = require('../core/plugins/registry.cjs');
 const { Vision } = require('../core/vision.cjs');
 const { SpeechWorker } = require('../core/speech.cjs');
 const { targetWindow } = require('../core/window-target.cjs');
@@ -31,7 +35,15 @@ const { ScreenContext } = require('../core/screen-context.cjs');
 const { BrowserAgent } = require('../core/browser-agent.cjs');
 const { ResearchAgent } = require('../core/research-agent.cjs');
 const { publicError } = require('../core/agent-errors.cjs');
-const withTarget = targetWindow(() => win);
+const { readConfiguration, writeConfiguration } = require('../core/configuration.cjs');
+const { ordinaryNavigation } = require('../core/navigation-safety.cjs');
+const { resolveOrdinal } = require('../core/ordinal-controls.cjs');
+let prepareDesktop;
+const withTarget = targetWindow(
+  () => win,
+  undefined,
+  () => prepareDesktop?.(),
+);
 const inFlight = new Set();
 function track(operation) {
   const pending = operation();
@@ -62,12 +74,17 @@ let win,
   planner,
   vision,
   ollama,
+  ai,
+  secrets,
+  registry,
   configFile,
   timer,
   screenContext,
+  browserForDiagnostics,
   lastStats = {},
   state = 'IDLE',
   statsBusy = false;
+app.commandLine.appendSwitch('force-renderer-accessibility');
 const smokeArg = process.argv.find((a) => a.startsWith('--smoke-test='));
 if (smokeArg) {
   const testDir = path.resolve(smokeArg.slice('--smoke-test='.length));
@@ -86,10 +103,9 @@ const workerRoot = () =>
 function loadConfig() {
   const dir = app.getPath('userData');
   configFile = path.join(dir, 'config.json');
-  try {
-    config = schema.parse(JSON.parse(fs.readFileSync(configFile, 'utf8')));
-  } catch {
-    config = defaults();
+  const loaded = readConfiguration(configFile);
+  config = loaded.config;
+  if (loaded.fresh) {
     const candidates = [
       path.join(__dirname, '..', '.venv', 'Scripts', 'python.exe'),
       path.resolve(path.dirname(app.getPath('exe')), '..', '..', '.venv', 'Scripts', 'python.exe'),
@@ -101,6 +117,7 @@ function loadConfig() {
   return dir;
 }
 function saveConfig(next) {
+  if (planner?.busy) planner.cancel();
   const changedSpeech =
     config &&
     ['pythonPath', 'sttModelPath', 'sttModel', 'sttLanguage', 'sttDevice'].some(
@@ -119,14 +136,14 @@ function saveConfig(next) {
   config = schema.parse(next);
   if (changedSpeech || !config.microphone) speech?.stop();
   if (changedVoice || !config.tts) speaker?.stop();
-  fs.writeFileSync(configFile + '.tmp', JSON.stringify(config, null, 2));
-  fs.renameSync(configFile + '.tmp', configFile);
+  writeConfiguration(configFile, config);
   app.setLoginItemSettings({
     openAtLogin: config.startup,
     args: config.minimized ? ['--minimized'] : [],
   });
   globalShortcut.unregisterAll();
-  globalShortcut.register('CommandOrControl+Shift+Escape', () => emergencyStop());
+  if (!globalShortcut.register('CommandOrControl+Shift+Backspace', () => emergencyStop()))
+    emit('reply', 'Emergency shortcut unavailable. Use the STOP button.');
   if (
     !globalShortcut.register(config.ptt, () => {
       if (config.microphone) {
@@ -137,6 +154,7 @@ function saveConfig(next) {
   )
     emit('reply', 'Push-to-talk shortcut could not be registered.');
   emit('config', config);
+  void registry?.reconcile();
   if (config.microphone) void speech?.prepare().catch(() => {});
   if (config.tts && config.ttsEngine !== 'windows')
     void speaker?.prepare(voiceSettings()).catch(() => {});
@@ -161,6 +179,22 @@ async function capture(monitor, width) {
   }
 }
 async function captureFrame(monitor, width, target) {
+  const sourcesWithinDeadline = async (options) => {
+    let timer;
+    try {
+      return await Promise.race([
+        desktopCapturer.getSources(options),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(Error('Screen capture timed out. Please try again.')),
+            10000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   if (config.captureScope === 'active-window') {
     const info =
       target ||
@@ -168,7 +202,7 @@ async function captureFrame(monitor, width, target) {
         tool: 'get_foreground_window',
         args: {},
       }));
-    const windows = await desktopCapturer.getSources({
+    const windows = await sourcesWithinDeadline({
       types: ['window'],
       thumbnailSize: { width, height: Math.round(width * 0.75) },
     });
@@ -195,7 +229,7 @@ async function captureFrame(monitor, width, target) {
     });
     monitor = String(screen.getDisplayNearestPoint(point).id);
   }
-  const sources = await desktopCapturer.getSources({
+  const sources = await sourcesWithinDeadline({
     types: ['screen'],
     thumbnailSize: { width, height: Math.round(width * 0.75) },
   });
@@ -236,7 +270,9 @@ function handlers() {
     config,
     stats: lastStats.time ? lastStats : null,
     state,
-    models: await ollama.models(),
+    models: await ai.models(),
+    aiUsage: { ...ai.usage },
+    plugins: registry.list(),
     tasks: store.tasks(),
     memories: store.memories(),
     screenContext: screenContext?.snapshot(),
@@ -271,7 +307,25 @@ function handlers() {
     emit('speech-abort', true);
   });
   handle('settings', (next) => saveConfig(next));
-  handle('models', () => ollama.models());
+  handle('models', () => ai.models());
+  handle('providerModels', (id) => ai.models(z.enum(['openai', 'anthropic', 'ollama']).parse(id)));
+  handle('credentials', () => secrets.status());
+  handle('setCredential', (name, value) => {
+    if (planner.busy) throw Error('Cancel the current task before changing credentials.');
+    return secrets.set(z.string().max(100).parse(name), z.string().max(8000).parse(value));
+  });
+  handle('plugins', () => registry.list());
+  handle('connectPlugin', (id) => {
+    if (planner.busy) throw Error('Cancel the current task before connecting a plugin.');
+    return registry.connect(z.string().max(40).parse(id));
+  });
+  handle('disconnectPlugin', async (id) => {
+    planner.cancel();
+    await registry.disconnect(z.string().max(40).parse(id));
+    emit('plugins', registry.list());
+    return registry.list();
+  });
+  handle('browserState', () => browserForDiagnostics.state());
   handle('vision', async () => {
     emit('state', 'OBSERVING SCREEN');
     try {
@@ -374,6 +428,12 @@ function handlers() {
         scale: d.scaleFactor,
       })),
       speakers: true,
+      visibleWindows: (
+        await pythonCall(config, path.join(workerRoot(), 'automation.py'), {
+          tool: 'list_windows',
+          args: {},
+        })
+      ).windows,
     };
   });
   handle('selectRoot', async () => {
@@ -388,10 +448,15 @@ function handlers() {
   });
 }
 async function init() {
+  app.setAccessibilitySupportEnabled(true);
   const dir = loadConfig();
+  lastStats = await telemetry().catch(() => ({}));
+  const automaticSpeechDevice =
+    lastStats.vramTotal && lastStats.vramTotal - lastStats.vram < 1100 ? 'cpu' : 'auto';
   speech = new SpeechWorker(
     () => ({
       ...config,
+      sttDevice: config.sttDevice === 'auto' ? automaticSpeechDevice : config.sttDevice,
       speechHints: [
         'Jarvis',
         ...Object.keys(config.appAliases),
@@ -407,11 +472,35 @@ async function init() {
   audit = new Audit(dir);
   store = await new Store().init(dir);
   ollama = new Ollama(() => config);
+  secrets = new SecretStore(dir, safeStorage);
+  ai = new ProviderRouter({ config: () => config, secrets, local: ollama, emit });
   const safety = new Safety();
-  const nativeCall = (tool, args = {}, signal) =>
-    pythonCall(config, path.join(workerRoot(), 'automation.py'), { tool, args }, 30000, signal);
+  const visionConfig = () => ({
+    ...config,
+    vision: config.pluginEnabled.screen === false ? 'off' : config.vision,
+  });
+  let lastTargetHwnd;
+  const nativeCall = async (tool, args = {}, signal) => {
+    const result = await pythonCall(
+      config,
+      path.join(workerRoot(), 'automation.py'),
+      { tool, args },
+      15000,
+      signal,
+    );
+    const target = result.window || (tool === 'get_foreground_window' ? result : null);
+    if (target?.hwnd && target.pid !== process.pid) lastTargetHwnd = target.hwnd;
+    return result;
+  };
+  prepareDesktop = async () => {
+    const result = await nativeCall('prepare_desktop', {
+      excludedPid: process.pid,
+      preferredHwnd: lastTargetHwnd,
+    });
+    if (result.window?.hwnd) lastTargetHwnd = result.window.hwnd;
+  };
   const targetFrame = async (window, width = config.imageQuality) => {
-    if (config.vision === 'off')
+    if (visionConfig().vision === 'off')
       throw Error('Screen vision is off. Enable it in Settings to inspect visible targets.');
     return captureFrame(config.monitor, width, window);
   };
@@ -436,8 +525,19 @@ async function init() {
       try {
         elements = (await nativeCall('list_ui_elements')).elements;
       } catch {}
-      const exact = elements.filter((e) => e.label.toLowerCase() === label.toLowerCase());
-      if (exact.length === 1) located = { ...exact[0], confidence: 1 };
+      const matches = elements.filter((e) => e.label.toLowerCase() === label.toLowerCase());
+      const clickable = matches.filter((e) =>
+        [
+          'ButtonControl',
+          'HyperlinkControl',
+          'TabItemControl',
+          'ListItemControl',
+          'MenuItemControl',
+        ].includes(e.kind),
+      );
+      const exact = clickable.length ? clickable : matches;
+      if (exact.length === 1)
+        located = { ...exact[0], confidence: 1, source: 'Windows UI Automation' };
       else located = await vision.locate(label, frame, signal, elements);
       publishFrame(frame, `Located ${located.label || label} for your requested click.`);
       return located;
@@ -461,13 +561,15 @@ async function init() {
     config: () => config,
     emit,
   });
+  browserForDiagnostics = browser;
   const research = new ResearchAgent();
   const discoveredGames = [];
   screenContext = new ScreenContext({
+    isAssistant: (window) => window.pid === process.pid,
     probe: () => nativeCall('get_foreground_window'),
     capture: targetFrame,
     controls: () => nativeCall('list_ui_elements'),
-    config: () => config,
+    config: visionConfig,
     emit,
     busy: () =>
       Boolean(
@@ -478,12 +580,14 @@ async function init() {
       ),
     stats: () => lastStats,
     games: () => discoveredGames,
-    analyze: (frame, question, signal) =>
-      ollama.chat(
+    analyze: (frame, question, signal, options) =>
+      ai.chat(
         [{ role: 'user', content: question, images: [frame.image] }],
         undefined,
         true,
         signal,
+        undefined,
+        options,
       ),
   });
   const compactContext = () => {
@@ -531,6 +635,9 @@ async function init() {
       research,
       verifyApplication,
       screenState: () => screenContext.snapshot(),
+      visibleWindows: async () => (await nativeCall('list_windows')).windows,
+      focusWindow: (window, signal) =>
+        withTarget(() => nativeCall('focus_application', { name: window.title }, signal)),
       screenEvent: (kind, text) => screenContext.event(kind, text),
       beginTask: () => screenContext.invalidateAnalysis(),
       cancelTask: () => screenContext.invalidateAnalysis(),
@@ -539,7 +646,7 @@ async function init() {
       },
       describe: (question, signal) => withTarget(() => screenContext.describe(question, signal)),
       summarize: (source, question, signal) =>
-        ollama.chat(
+        ai.chat(
           [
             {
               role: 'system',
@@ -567,26 +674,38 @@ async function init() {
       trash: (p) => shell.trashItem(p),
       clipboard,
       withTarget,
-      prepareTarget: (label, signal) => targets.prepare(label, signal),
-      prepareControl: async (id, signal) => {
+      prepareTarget: async (label, signal) => {
+        const review = await targets.prepare(label, signal);
+        const proof = targets.pending.get(review.id);
+        review.automaticNavigation = Boolean(
+          proof.control.source?.startsWith('Windows UI Automation') &&
+          ordinaryNavigation(proof.control, proof.window),
+        );
+        proof.review = structuredClone(review);
+        return review;
+      },
+      prepareControl: async (id, signal, selectorGoal) => {
         const known = screenContext.control(id);
-        const review = await targets.prepare(known.control.label, signal, known);
-        // Only actual accessible controls with these exact ordinary navigation
-        // labels may bypass approval. A model-supplied risk is never accepted.
-        const safe = [
-          'home',
-          'back',
-          'forward',
-          'library',
-          'explore',
-          'subscriptions',
-          'games',
-          'videos',
-          'search',
-        ];
-        review.automaticNavigation =
-          ['ButtonControl', 'HyperlinkControl', 'TabItemControl'].includes(known.control.kind) &&
-          safe.includes(known.control.label.toLowerCase());
+        const review = await withTarget(async () => {
+          const controls = (await nativeCall('list_ui_elements', {}, signal)).elements;
+          const fresh = controls.filter(
+            (e) =>
+              e.label === known.control.label &&
+              e.kind === known.control.kind &&
+              e.automationId === known.control.automationId,
+          );
+          if (fresh.length !== 1)
+            throw Error('The actual control changed or became ambiguous. Observe again.');
+          const selected = resolveOrdinal(selectorGoal, controls, fresh[0]);
+          return targets.prepare(selected.label, signal, {
+            window: known.window,
+            control: selected,
+          });
+        });
+        // Classify the actual selected control after ordinal resolution.
+        // A model-supplied risk is never accepted.
+        const proof = targets.pending.get(review.id);
+        review.automaticNavigation = ordinaryNavigation(proof.control, proof.window);
         // Bind the host-certified flag to the stored target proof as well.
         targets.pending.get(review.id).review = structuredClone(review);
         return review;
@@ -621,12 +740,22 @@ async function init() {
       },
     },
   });
-  planner = new Planner({ ollama, executor, safety, store, emit, audit, config: () => config });
+  registry = new PluginRegistry({ config: () => config, executor, store, secrets, emit });
+  planner = new AgentLoop({
+    ai,
+    registry,
+    executor,
+    safety,
+    store,
+    emit,
+    audit,
+    config: () => config,
+  });
   void executor.apps.all().catch(() => {});
   void nativeCall('list_installed_games')
     .then((result) => executor.host.gamesDiscovered(result.games))
     .catch(() => {});
-  vision = new Vision({ capture, ollama, config: () => config });
+  vision = new Vision({ capture, ollama: ai, config: visionConfig });
   win = new BrowserWindow({
     width: 1500,
     height: 980,
@@ -684,7 +813,7 @@ async function init() {
   saveConfig(config);
   void ollama.warm().catch(() => {});
   const sample = async () => {
-    if (statsBusy) return;
+    if (statsBusy || planner?.busy || speech?.pending || speaker?.pending) return;
     statsBusy = true;
     try {
       lastStats = await telemetry();
@@ -706,6 +835,7 @@ async function init() {
     fs.writeFileSync(path.join(dir, 'smoke-result.json'), JSON.stringify(result, null, 2));
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(path.join(dir, 'hud.png'), shot.toPNG());
+    await require('../core/runtime-smoke.cjs').smoke(win, dir);
     quitting = true;
     app.quit();
   }
@@ -717,7 +847,13 @@ else {
     .whenReady()
     .then(init)
     .catch((e) => {
-      dialog.showErrorBox('JARVIS startup failed', e.message);
+      if (smokeArg)
+        fs.writeFileSync(
+          path.join(app.getPath('userData'), 'smoke-error.txt'),
+          e.stack || e.message,
+        );
+      else dialog.showErrorBox('JARVIS startup failed', e.message);
+      quitting = true;
       app.quit();
     });
   app.on('before-quit', () => {
@@ -728,6 +864,7 @@ else {
     globalShortcut.unregisterAll();
     planner?.cancel();
     screenContext?.stop();
+    void registry?.close();
   });
   app.on('window-all-closed', () => {
     if (quitting || !config?.tray) app.quit();

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Core, Sparkline, Waveform } from './Core';
 import { Settings, Setup } from './Settings';
+import { PluginManager } from './AgentSettings';
 import { useVoice } from './useVoice';
 import { SpeechPlayback } from './speechPlayback';
 import {
@@ -13,6 +14,8 @@ import {
   VisionResult,
   ScreenState,
   BrowserState,
+  AIUsage,
+  Plugin,
   unwrap,
 } from './types';
 const modules = [
@@ -24,6 +27,7 @@ const modules = [
   'AUTOMATION',
   'FILES',
   'SETTINGS',
+  'PLUGINS',
   'LOGS',
 ];
 const number = (v: number | null | undefined, digits = 0) => (v == null ? '—' : v.toFixed(digits));
@@ -88,6 +92,8 @@ export function App() {
     [vision, setVision] = useState<VisionResult | null>(null),
     [screenContext, setScreenContext] = useState<ScreenState | null>(null),
     [browserState, setBrowserState] = useState<BrowserState | null>(null),
+    [aiUsage, setAIUsage] = useState<AIUsage | null>(null),
+    [plugins, setPlugins] = useState<Plugin[]>([]),
     [clock, setClock] = useState(new Date()),
     [messages, setMessages] = useState<Message[]>([
       {
@@ -326,10 +332,21 @@ export function App() {
         setTasks(s.tasks);
         setMemories(s.memories);
         setScreenContext(s.screenContext || null);
+        setAIUsage(s.aiUsage || null);
+        setPlugins(s.plugins || []);
       })
       .catch((e) => report(String(e)));
     const unsub = api.on((e) => {
       switch (e.type) {
+        case 'ai-usage':
+          setAIUsage(e.data as AIUsage);
+          break;
+        case 'plugins':
+          setPlugins(e.data as Plugin[]);
+          break;
+        case 'provider-fallback':
+          report('The AI connection is unavailable. Trying the configured fallback.');
+          break;
         case 'telemetry': {
           const s = e.data as Stats;
           setStats(s);
@@ -530,7 +547,7 @@ export function App() {
         </div>
         <div className="top-status">
           <i className={online ? 'status-dot' : 'status-dot amber'} />
-          {online ? 'LOCAL AI CONNECTED' : 'LOCAL AI OFFLINE'}
+          {online ? 'AI CONNECTED' : 'AI CONNECTION UNAVAILABLE'}
           <span className="divider">/</span>
           <span>
             {!config ? 'DESIGN PREVIEW' : config.mock ? 'SIMULATION MODE' : 'LIVE CONTROL'}
@@ -696,7 +713,8 @@ export function App() {
                   <i />
                 </div>
                 <div className="panel-footer">
-                  LOCAL PROCESSING<span>NO PAID API</span>
+                  {aiUsage?.processing || 'LOCAL'} PROCESSING
+                  <span>{aiUsage?.provider.toUpperCase() || 'OLLAMA'}</span>
                 </div>
               </Panel>
             </div>
@@ -714,7 +732,7 @@ export function App() {
                   ? active.title
                   : online
                     ? 'Ready when you are.'
-                    : 'Connect Ollama to activate local intelligence.'}
+                    : 'Configure an AI provider in Settings.'}
               </p>
               <div className="core-actions">
                 <button
@@ -771,11 +789,49 @@ export function App() {
                 </div>
                 <div className="status-table">
                   {[
-                    ['AI MODEL', config?.model || 'NOT SELECTED'],
-                    ['OLLAMA', online ? 'CONNECTED' : 'OFFLINE'],
+                    [
+                      'AI PROVIDER',
+                      aiUsage?.provider.toUpperCase() || config?.provider.toUpperCase() || 'OLLAMA',
+                    ],
+                    [
+                      'AI MODEL',
+                      aiUsage?.model ||
+                        (config?.provider === 'openai'
+                          ? config.openaiModel
+                          : config?.provider === 'anthropic'
+                            ? config.anthropicModel
+                            : config?.model) ||
+                        'NOT SELECTED',
+                    ],
+                    ['FALLBACK', config?.fallbackProvider.toUpperCase() || 'NONE'],
+                    ['PROCESSING', aiUsage?.processing || 'LOCAL'],
+                    [
+                      'PLUGIN STATUS',
+                      `${plugins.filter((p) => p.enabled && p.status === 'connected').length} CONNECTED`,
+                    ],
+                    [
+                      'AGENT STEP',
+                      active ? `${active.steps.length} / ${config?.agentMaxSteps || 24}` : 'IDLE',
+                    ],
+                    ['CURRENT PLAN', active?.stage?.toUpperCase() || 'STANDBY'],
+                    [
+                      'CURRENT TOOL',
+                      active?.steps.find((s) => ['running', 'waiting'].includes(s.status))?.tool ||
+                        'NONE',
+                    ],
+                    [
+                      'SESSION USAGE',
+                      `${aiUsage?.requests || 0} REQUESTS · ${(aiUsage?.inputTokens || 0) + (aiUsage?.outputTokens || 0)} TOKENS`,
+                    ],
+                    ['CLOUD REQUESTS', String(aiUsage?.cloudRequests || 0)],
+                    ['CONFIRMATION', confirmation ? 'WAITING' : 'CLEAR'],
                     [
                       'MICROPHONE',
-                      voice.listening ? 'LISTENING' : config?.microphone ? 'READY' : 'DISABLED',
+                      !config?.microphone
+                        ? 'DISABLED'
+                        : voice.listening
+                          ? 'LISTENING'
+                          : voice.status,
                     ],
                     ['SCREEN VISION', config?.vision?.toUpperCase() || 'DESKTOP ONLY'],
                     ['WAKE PHRASE', config?.wakeEnabled ? config.wakeWord : 'DISABLED'],
@@ -850,7 +906,7 @@ export function App() {
             <Panel title="SCENE INTERPRETATION" code="VISION / LOCAL">
               <p className="analysis-text">
                 {vision?.description ||
-                  'Choose a vision-capable Ollama model in Settings to enable scene understanding.'}
+                  'Choose a vision model in Settings. Background screen analysis stays local.'}
               </p>
               <div className="panel-footer">
                 LAST ANALYSIS
@@ -1095,7 +1151,7 @@ export function App() {
                 EMERGENCY STOP
               </button>
               <p className="help">
-                CTRL + SHIFT + ESCAPE stops the queue. It cannot undo an action already executed.
+                CTRL + SHIFT + BACKSPACE stops the queue. It cannot undo an action already executed.
               </p>
             </Panel>
           </div>
@@ -1132,6 +1188,11 @@ export function App() {
             >
               SEARCH WITH JARVIS
             </button>
+          </Panel>
+        )}
+        {page === 'PLUGINS' && config && (
+          <Panel title="PLUGIN CONNECTIONS" code="CAPABILITIES / MCP">
+            <PluginManager config={config} save={save} />
           </Panel>
         )}
         {page === 'SETTINGS' &&
@@ -1246,7 +1307,7 @@ export function App() {
           <i className="status-dot" /> JARVIS / LOCAL-FIRST
         </span>
         <span>
-          {online ? 'OLLAMA CONNECTED' : 'OLLAMA OFFLINE'} ·{' '}
+          {online ? 'AI CONNECTED' : 'AI UNAVAILABLE'} · {aiUsage?.processing || 'LOCAL'} ·{' '}
           {config?.vision === 'off'
             ? 'VISION OFF'
             : 'VISION ' + (config?.vision?.toUpperCase() || 'DESKTOP ONLY')}

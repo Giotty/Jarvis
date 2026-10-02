@@ -69,11 +69,14 @@ test('partial transcripts cannot execute games, arbitrary forms, or destructive 
     assert.equal(earlyIntent(text), null);
 });
 
-test('an early navigation runs once when the completed utterance requests the same action', async () => {
+test('partial speech cannot launch an app before the complete request arrives', async () => {
   const actions = [],
     events = [];
   const p = new Planner({
-    config: () => ({ conversationMode: true }),
+    config: () => ({
+      conversationMode: true,
+      websiteAliases: { youtube: 'https://www.youtube.com/' },
+    }),
     executor: {
       execute: async (action) => {
         actions.push(action);
@@ -90,11 +93,11 @@ test('an early navigation runs once when the completed utterance requests the sa
     audit: { write() {} },
     emit: (type, data) => events.push({ type, data }),
   });
-  assert.equal((await p.preview('open YouTube', 'turn')).started, true);
+  assert.equal((await p.preview('open YouTube', 'turn')).started, false);
   await p.preview('open YouTube', 'turn');
   await p.command('open YouTube', 'turn');
   assert.equal(actions.length, 1);
-  assert.equal(p.context.site, 'youtube');
+  assert.equal(actions[0].args.url, 'https://www.youtube.com/');
   assert.equal(
     events.some((e) => e.type === 'confirmation'),
     false,

@@ -1,6 +1,29 @@
 export type Config = {
   setupComplete: boolean;
   mock: boolean;
+  provider: ProviderID;
+  fallbackProvider: ProviderID | 'none';
+  cloudEnabled: boolean;
+  preferLocalSimple: boolean;
+  cloudVision: 'disabled' | 'manual' | 'when-needed';
+  cloudScreen: boolean;
+  cloudClipboard: boolean;
+  cloudFiles: boolean;
+  openaiUrl: string;
+  openaiModel: string;
+  openaiVisionModel: string;
+  anthropicModel: string;
+  providerCapabilities: Record<string, string[]>;
+  agentMaxSteps: number;
+  agentRetries: number;
+  toolTimeout: number;
+  providerTimeout: number;
+  agentTaskTimeout: number;
+  parallelTools: boolean;
+  automaticRecovery: boolean;
+  cloudRequestLimit: number;
+  pluginEnabled: Record<string, boolean>;
+  mcpServers: MCPServer[];
   ollamaUrl: string;
   model: string;
   visionModel: string;
@@ -72,6 +95,43 @@ export type Stats = {
   processes: { name: string; pid: number; ram: number; cpu: number }[];
   time: number;
 };
+export type ProviderID = 'ollama' | 'openai' | 'anthropic';
+export type MCPServer = {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  command: string;
+  args: string[];
+  url: string;
+  permissions: string[];
+};
+export type Plugin = {
+  id: string;
+  name: string;
+  builtin: boolean;
+  enabled: boolean;
+  status: string;
+  permissions: string[];
+  tools: {
+    name: string;
+    description: string;
+    risk: number;
+    confirmation: boolean;
+    permissions: string[];
+    permitted: boolean;
+    inputSchema: unknown;
+    outputSchema?: unknown;
+  }[];
+};
+export type AIUsage = {
+  requests: number;
+  cloudRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  provider: ProviderID;
+  model: string;
+  processing: 'CLOUD' | 'LOCAL';
+};
 export type Step = {
   tool: string;
   args: Record<string, unknown>;
@@ -87,6 +147,7 @@ export type Task = {
   finished?: number;
   status: string;
   steps: Step[];
+  stage?: string;
 };
 export type Memory = { id: number; category: string; content: string };
 export type Confirmation = {
@@ -149,6 +210,8 @@ export type JarvisAPI = {
       tasks: Task[];
       memories: Memory[];
       screenContext?: ScreenState;
+      aiUsage?: AIUsage;
+      plugins?: Plugin[];
     }>
   >;
   command: (text: string, turn?: string) => Promise<Result<void>>;
@@ -159,6 +222,12 @@ export type JarvisAPI = {
   cancel: () => Promise<Result<void>>;
   settings: (c: Config) => Promise<Result<Config>>;
   models: () => Promise<Result<{ online: boolean; models: string[] }>>;
+  providerModels: (provider: ProviderID) => Promise<Result<{ online: boolean; models: string[] }>>;
+  credentials: () => Promise<Result<Record<string, boolean>>>;
+  setCredential: (name: string, value: string) => Promise<Result<Record<string, boolean>>>;
+  plugins: () => Promise<Result<Plugin[]>>;
+  connectPlugin: (id: string) => Promise<Result<Plugin[]>>;
+  disconnectPlugin: (id: string) => Promise<Result<Plugin[]>>;
   vision: () => Promise<Result<VisionResult>>;
   locate: (
     label: string,
@@ -172,6 +241,7 @@ export type JarvisAPI = {
   transcribe: (audio: string) => Promise<Result<{ text: string }>>;
   synthesize: (text: string) => Promise<Result<{ audio: string }>>;
   diagnostics: () => Promise<Result<Diagnostics>>;
+  browserState: () => Promise<Result<BrowserState>>;
   selectRoot: () => Promise<Result<string | null>>;
   window: (action: string) => Promise<Result<void>>;
   on: (fn: (event: { type: string; data: unknown }) => void) => () => void;
