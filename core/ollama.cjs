@@ -36,9 +36,13 @@ class Ollama {
       signal: signal
         ? AbortSignal.any([
             signal,
-            AbortSignal.timeout(route === '/api/chat' ? 45000 : body ? 60000 : 5000),
+            AbortSignal.timeout(
+              route === '/api/chat' ? this.config().providerTimeout || 45000 : body ? 60000 : 5000,
+            ),
           ])
-        : AbortSignal.timeout(route === '/api/chat' ? 45000 : body ? 60000 : 5000),
+        : AbortSignal.timeout(
+            route === '/api/chat' ? this.config().providerTimeout || 45000 : body ? 60000 : 5000,
+          ),
     });
     if (!r.ok) {
       const detail = await r.json().catch(() => ({}));
@@ -153,8 +157,12 @@ class Ollama {
         stream: Boolean(onDelta),
         keep_alive: '30m',
         ...(options.schema ? { format: options.schema } : {}),
-        ...(model.startsWith('qwen3') ? { think: false } : {}),
-        options: { temperature: c.temperature, num_ctx: c.context, num_predict: 1024 },
+        ...(model.startsWith('qwen3') ? { think: options.reasoning === true } : {}),
+        options: {
+          temperature: c.temperature,
+          num_ctx: c.context,
+          num_predict: options.outputTokens || 1024,
+        },
       },
       signal,
       onDelta,

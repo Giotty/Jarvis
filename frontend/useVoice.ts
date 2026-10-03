@@ -6,7 +6,6 @@ type Job = {
   rate: number;
   turn: string;
   generation: number;
-  partial: boolean;
   barrier: Promise<void>;
 };
 export function useVoice(
@@ -79,11 +78,6 @@ export function useVoice(
           await job.barrier;
           if (!valid()) continue;
           const c = current.current.config!;
-          if (job.partial) {
-            if (c.conversationMode)
-              await unwrap(window.jarvis.previewSpeech(text.slice(0, 1000), job.turn));
-            continue;
-          }
           if (c.wakeEnabled && !c.conversationMode) {
             const index = text.toLowerCase().indexOf(c.wakeWord.toLowerCase());
             if (index >= 0) {
@@ -99,7 +93,7 @@ export function useVoice(
             }
           } else void current.current.command(text, job.turn);
         } catch (error) {
-          if (valid() && !job.partial) current.current.report(String(error));
+          if (valid()) current.current.report(String(error));
         }
       }
     } finally {
@@ -108,14 +102,12 @@ export function useVoice(
     }
   }, []);
   const enqueue = useCallback(
-    (frames: Float32Array[], partial: boolean) => {
+    (frames: Float32Array[]) => {
       if (!audio.current || !turn.current) return;
       // Keep only the newest waiting turn; never replay stale commands later.
-      if (partial && (processing.current || jobs.current.length)) return;
-      if (!partial) jobs.current = [];
+      jobs.current = [];
       jobs.current.push({
         frames,
-        partial,
         rate: audio.current.sampleRate,
         turn: turn.current,
         generation: generation.current,
@@ -127,7 +119,7 @@ export function useVoice(
   );
   const stop = useCallback(() => {
     const frames = capture.current?.finish();
-    if (frames) enqueue(frames, false);
+    if (frames) enqueue(frames);
     release();
   }, [enqueue, release]);
   const start = useCallback(async () => {
@@ -231,9 +223,8 @@ export function useVoice(
           else barrier.current = Promise.resolve();
           current.current.setState('LISTENING');
         }
-        if (result.preview && settings?.conversationMode) enqueue(result.preview, true);
         if (result.final) {
-          enqueue(result.final, false);
+          enqueue(result.final);
           if (!live) release();
         }
       };

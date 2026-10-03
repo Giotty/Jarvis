@@ -1,6 +1,5 @@
 export type SpeechFrame = {
   onset: boolean;
-  preview?: Float32Array[];
   final?: Float32Array[];
   level: number;
 };
@@ -13,7 +12,6 @@ export class SpeechCapture {
   private quiet = 0;
   private duration = 0;
   private noise = 0.003;
-  private previewed = false;
   active = false;
   constructor(readonly rate: number) {}
   finish(): Float32Array[] | undefined {
@@ -22,7 +20,6 @@ export class SpeechCapture {
     this.pre = [];
     this.active = false;
     this.speech = this.quiet = this.duration = 0;
-    this.previewed = false;
     return result;
   }
   push(frame: Float32Array, automatic: boolean): SpeechFrame {
@@ -43,10 +40,6 @@ export class SpeechCapture {
     } else this.frames.push(frame);
     this.duration += ms;
     this.quiet = loud ? 0 : this.quiet + ms;
-    if (!this.previewed && this.duration >= 4500 && this.quiet < 200) {
-      this.previewed = true;
-      result.preview = this.frames.slice();
-    }
     if (this.duration >= 25000 || (automatic && this.quiet >= 600)) result.final = this.finish();
     return result;
   }

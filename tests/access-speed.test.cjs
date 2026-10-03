@@ -10,9 +10,9 @@ const {
   resolveFile,
   readFile,
 } = require('../core/windows-system.cjs');
-const { directIntent, conversationOnly } = require('../core/intents.cjs');
+const { directIntent, conversationOnly } = require('./legacy/intents.cjs');
 const { validate } = require('../core/tools.cjs');
-const { Planner } = require('../core/planner.cjs');
+const { Planner } = require('./legacy/planner.cjs');
 const { Safety } = require('../core/safety.cjs');
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 test('installed app routing expands names without guessing ambiguous apps or trusting installer aliases', () => {

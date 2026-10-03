@@ -1,3 +1,4 @@
+// Historical regression fixture only. Never loaded or packaged by JARVIS.
 class TaskContext {
   constructor() {
     this.actions = [];

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Core, Sparkline, Waveform } from './Core';
-import { Settings, Setup } from './Settings';
-import { PluginManager } from './AgentSettings';
+import { Sparkline } from './Core';
+import { Reactor } from './Reactor';
+import { ConfirmationRing } from './ConfirmationRing';
+import { BriefingView } from './BriefingView';
+import { ControlDeck, UtilityDrawer, categories, Category } from './ControlDeck';
+import { Setup } from './Initialization';
 import { useVoice } from './useVoice';
 import { SpeechPlayback } from './speechPlayback';
 import {
+  Briefing,
   Audit,
   Config,
   Confirmation,
@@ -18,18 +22,6 @@ import {
   Plugin,
   unwrap,
 } from './types';
-const modules = [
-  'HOME',
-  'VISION',
-  'SYSTEM',
-  'TASKS',
-  'MEMORY',
-  'AUTOMATION',
-  'FILES',
-  'SETTINGS',
-  'PLUGINS',
-  'LOGS',
-];
 const number = (v: number | null | undefined, digits = 0) => (v == null ? '—' : v.toFixed(digits));
 const gb = (v: number) => `${(v / 1024 ** 3).toFixed(1)} GB`;
 type Message = { id: number; role: string; text: string; time: string };
@@ -84,7 +76,6 @@ export function App() {
     [stats, setStats] = useState<Stats | null>(null),
     [state, setState] = useState('OFFLINE'),
     [online, setOnline] = useState(false),
-    [models, setModels] = useState<string[]>([]),
     [tasks, setTasks] = useState<Task[]>([]),
     [memories, setMemories] = useState<Memory[]>([]),
     [logs, setLogs] = useState<Audit[]>([]),
@@ -113,28 +104,23 @@ export function App() {
       ram: [],
       gpu: [],
     }),
-    [note, setNote] = useState(''),
-    [category, setCategory] = useState('notes'),
-    [editId, setEditId] = useState<number | undefined>(),
-    [target, setTarget] = useState(''),
-    [located, setLocated] = useState<{
-      x: number;
-      y: number;
-      confidence: number;
-      label: string;
-    } | null>(null),
-    [files, setFiles] = useState(''),
-    [voiceName, setVoiceName] = useState(''),
-    [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+    [voiceName] = useState(''),
+    [settingsOpen, setSettingsOpen] = useState(false),
+    [settingCategory, setSettingCategory] = useState<Category | null>(null),
+    [briefing, setBriefing] = useState<Briefing | null>(null),
+    [briefingVisible, setBriefingVisible] = useState(false),
+    [autoNarration, setAutoNarration] = useState(0),
+    [outputLevel, setOutputLevel] = useState(0);
   const nextId = useRef(1),
     partialReply = useRef<number | null>(null),
     commandBusy = useRef(false),
-    feed = useRef<HTMLDivElement | null>(null),
     configRef = useRef(config),
     commandRef = useRef<(text: string, turn?: string) => Promise<void>>(async () => {}),
     commandFlight = useRef(Promise.resolve()),
     commandEpoch = useRef(0),
     acceptReplies = useRef(true);
+  const narrationDone = useRef<(() => void) | null>(null),
+    narrateThisTask = useRef(false);
   const confirmationRef = useRef(confirmation);
   confirmationRef.current = confirmation;
   configRef.current = config;
@@ -142,6 +128,7 @@ export function App() {
     streamedSpeech = useRef(false),
     speechGeneration = useRef(0);
   const interrupt = useCallback(async () => {
+    narrationDone.current = null;
     partialReply.current = null;
     speechGeneration.current++;
     player.current?.stop();
@@ -169,12 +156,45 @@ export function App() {
       synthesize: async (text) => (await unwrap(window.jarvis!.synthesize(text))).audio,
       play: (data) => {
         const audio = new Audio('data:audio/wav;base64,' + data);
-        let finish!: () => void;
+        let finish!: () => void,
+          meter: ReturnType<typeof setInterval> | undefined,
+          context: AudioContext | undefined;
+        const clean = () => {
+          if (meter) clearInterval(meter);
+          void context?.close();
+          setOutputLevel(0);
+        };
         const done = new Promise<void>((resolve, reject) => {
           finish = resolve;
-          audio.onended = () => resolve();
-          audio.onerror = () => reject(Error('Local voice playback failed.'));
-          void audio.play().catch(reject);
+          audio.onended = () => {
+            clean();
+            resolve();
+          };
+          audio.onerror = () => {
+            clean();
+            reject(Error('Local voice playback unavailable.'));
+          };
+          try {
+            context = new AudioContext();
+            const analyser = context.createAnalyser();
+            analyser.fftSize = 256;
+            context.createMediaElementSource(audio).connect(analyser);
+            analyser.connect(context.destination);
+            const samples = new Float32Array(analyser.fftSize);
+            meter = setInterval(() => {
+              analyser.getFloatTimeDomainData(samples);
+              setOutputLevel(
+                Math.min(1, Math.sqrt(samples.reduce((n, v) => n + v * v, 0) / samples.length) * 5),
+              );
+            }, 80);
+            void context.resume();
+          } catch {
+            /* Audio playback remains usable without a level meter. */
+          }
+          void audio.play().catch((error) => {
+            clean();
+            reject(error);
+          });
         });
         return {
           done,
@@ -182,11 +202,17 @@ export function App() {
             audio.pause();
             audio.onended = null;
             audio.onerror = null;
+            clean();
             finish();
           },
         };
       },
       state: (speaking) => setState((s) => (speaking ? 'SPEAKING' : s === 'SPEAKING' ? 'IDLE' : s)),
+      complete: () => {
+        const done = narrationDone.current;
+        narrationDone.current = null;
+        done?.();
+      },
       error: (error) => {
         report(String(error));
         setState('ERROR');
@@ -216,7 +242,12 @@ export function App() {
       }
       speech.voice = voice;
       speech.onstart = () => setState('SPEAKING');
-      speech.onend = () => setState((s) => (s === 'SPEAKING' ? 'IDLE' : s));
+      speech.onend = () => {
+        setState((s) => (s === 'SPEAKING' ? 'IDLE' : s));
+        const done = narrationDone.current;
+        narrationDone.current = null;
+        done?.();
+      };
       speech.onerror = (event) => {
         if (
           generation === speechGeneration.current &&
@@ -228,6 +259,25 @@ export function App() {
     },
     [voiceName, report],
   );
+  const narrate = useCallback(
+    (text: string, done: () => void) => {
+      speak(text);
+      narrationDone.current = done;
+    },
+    [speak],
+  );
+  useEffect(() => {
+    const exit = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSettingsOpen(false);
+        setSettingCategory(null);
+        setPage('HOME');
+        void window.jarvis?.window('exit-fullscreen');
+      }
+    };
+    window.addEventListener('keydown', exit);
+    return () => window.removeEventListener('keydown', exit);
+  }, []);
   const command = useCallback(
     async (text: string, turn?: string) => {
       if (!window.jarvis) {
@@ -269,6 +319,11 @@ export function App() {
         report('JARVIS is finishing the current task. Press STOP to cancel it.');
         return;
       }
+      narrationDone.current = null;
+      narrateThisTask.current = false;
+      setAutoNarration(0);
+      player.current?.stop();
+      speechSynthesis.cancel();
       commandBusy.current = true;
       acceptReplies.current = true;
       let settled!: () => void;
@@ -308,12 +363,8 @@ export function App() {
   voiceRef.current = voice;
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 1000);
-    const update = () => setVoices(speechSynthesis.getVoices().filter((v) => v.localService));
-    update();
-    speechSynthesis.addEventListener('voiceschanged', update);
     return () => {
       clearInterval(timer);
-      speechSynthesis.removeEventListener('voiceschanged', update);
     };
   }, []);
   useEffect(() => {
@@ -328,16 +379,21 @@ export function App() {
         setStats(s.stats);
         setState(s.state);
         setOnline(s.models.online);
-        setModels(s.models.models);
         setTasks(s.tasks);
         setMemories(s.memories);
         setScreenContext(s.screenContext || null);
         setAIUsage(s.aiUsage || null);
         setPlugins(s.plugins || []);
+        if (s.briefing) setBriefing(s.briefing);
       })
       .catch((e) => report(String(e)));
     const unsub = api.on((e) => {
       switch (e.type) {
+        case 'briefing':
+          setBriefing(e.data as Briefing);
+          setBriefingVisible(true);
+          if ((e.data as Briefing).modelOrganized) narrateThisTask.current = true;
+          break;
         case 'ai-usage':
           setAIUsage(e.data as AIUsage);
           break;
@@ -364,7 +420,8 @@ export function App() {
           if (
             acceptReplies.current &&
             configRef.current?.tts &&
-            configRef.current.ttsEngine !== 'windows'
+            configRef.current.ttsEngine !== 'windows' &&
+            !narrateThisTask.current
           ) {
             streamedSpeech.current = true;
             player.current?.begin();
@@ -390,7 +447,11 @@ export function App() {
             );
             partialReply.current = null;
           }
-          if (streamedSpeech.current) {
+          if (narrateThisTask.current && configRef.current?.tts) {
+            player.current?.stop();
+            streamedSpeech.current = false;
+            setAutoNarration((n) => n + 1);
+          } else if (streamedSpeech.current) {
             player.current?.finish();
             streamedSpeech.current = false;
           } else speechRef.current(e.data as string);
@@ -466,6 +527,7 @@ export function App() {
           voiceRef.current.toggle();
           break;
         case 'stop':
+          narrationDone.current = null;
           commandEpoch.current++;
           acceptReplies.current = false;
           partialReply.current = null;
@@ -483,20 +545,6 @@ export function App() {
       unsub();
     };
   }, [report]);
-  useEffect(() => {
-    feed.current?.scrollTo({ top: feed.current.scrollHeight, behavior: 'smooth' });
-  }, [messages]);
-  const refresh = async () => {
-    if (window.jarvis) {
-      try {
-        const r = await unwrap(window.jarvis.models());
-        setOnline(r.online);
-        setModels(r.models);
-      } catch (e) {
-        report(String(e));
-      }
-    }
-  };
   const save = async (c: Config) => {
     if (window.jarvis) setConfig(await unwrap(window.jarvis.settings(c)));
   };
@@ -512,6 +560,7 @@ export function App() {
     }
   };
   const stop = async () => {
+    narrationDone.current = null;
     partialReply.current = null;
     voice.cancel();
     speechGeneration.current++;
@@ -535,24 +584,58 @@ export function App() {
         .catch((e) => report(String(e)));
   };
   const active = tasks.find((t) => ['running', 'waiting'].includes(t.status));
+  const researching = !!active?.steps.some(
+    (s) =>
+      ['web_search', 'extract_page_text', 'find_images'].includes(s.tool) && s.status === 'running',
+  );
+  const coreState = confirmation
+    ? 'CONFIRMATION'
+    : researching
+      ? 'RESEARCHING'
+      : state === 'IDLE' && voice.listening
+        ? 'LISTENING'
+        : state;
+  const selectedProvider = aiUsage?.provider || (config?.cloudEnabled ? config.provider : 'ollama');
+  const currentStep = active?.steps.at(-1);
+  const displayMessage = messages.filter((m) => m.role === 'USER' || m.role === 'JARVIS').slice(-2);
+  const openSettings = (category: Category | null = null) => {
+    setSettingsOpen(true);
+    setSettingCategory(category);
+    setPage('HOME');
+  };
   return (
-    <div className={`app animations-${config?.animations || 'full'}`}>
-      <div className="background-grid" />
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-icon">J</div>
-          <div>
-            JARVIS<small>PERSONAL INTELLIGENCE SYSTEM</small>
-          </div>
+    <div
+      className={
+        'app hud-root animations-' +
+        (config?.animations || 'full') +
+        ' intensity-' +
+        (config?.animationIntensity || 'normal') +
+        (settingsOpen ? ' settings-open' : '') +
+        (settingCategory ? ' category-open' : '') +
+        (briefingVisible && briefing && !settingsOpen ? ' briefing-open' : '') +
+        (confirmation ? ' confirmation-active' : '')
+      }
+    >
+      <div className="technical-grid" />
+      <div className="ambient-orbit" />
+      <div className="viewport-corners">
+        <i />
+        <i />
+        <i />
+        <i />
+      </div>
+      <header className="brand-strip">
+        <div className="brand-mark">
+          M<span>I</span>
         </div>
-        <div className="top-status">
-          <i className={online ? 'status-dot' : 'status-dot amber'} />
-          {online ? 'AI CONNECTED' : 'AI CONNECTION UNAVAILABLE'}
-          <span className="divider">/</span>
-          <span>
-            {!config ? 'DESIGN PREVIEW' : config.mock ? 'SIMULATION MODE' : 'LIVE CONTROL'}
-          </span>
+        <div className="industry-brand">
+          MAATOUK INDUSTRIES<small>JARVIS SYSTEMS / NEURAL INTERFACE</small>
         </div>
+        <div className="brand-line" />
+        <span className="session-clock">
+          {clock.toLocaleTimeString('en-GB')}
+          <small>{clock.toLocaleDateString('en-CA')}</small>
+        </span>
         <div className="window-controls">
           <button
             aria-label="Minimize window"
@@ -561,843 +644,420 @@ export function App() {
             −
           </button>
           <button
-            aria-label="Maximize window"
-            onClick={() => void window.jarvis?.window('maximize')}
+            aria-label="Immersive fullscreen"
+            onClick={() => void window.jarvis?.window('fullscreen')}
           >
-            □
+            ⛶
           </button>
           <button aria-label="Close window" onClick={() => void window.jarvis?.window('close')}>
             ×
           </button>
         </div>
       </header>
-      <nav className="navigation" aria-label="Modules">
-        {modules.map((m, i) => (
-          <button key={m} className={page === m ? 'active' : ''} onClick={() => selectPage(m)}>
-            <small>{String(i + 1).padStart(2, '0')}</small>
-            {m}
-          </button>
-        ))}
-        <button className="emergency" onClick={() => void stop()}>
-          ■ STOP
-        </button>
-      </nav>
-      <main>
-        <div className="page-heading">
-          <div>
-            <span className="eyebrow">J.A.R.V.I.S. / COMMAND ENVIRONMENT</span>
-            <h1>
-              {page === 'HOME' ? 'Neural command center' : page.toLowerCase() + ' interface'}
-              <span className="heading-line" />
-            </h1>
+      <main className="hud-stage">
+        <aside className="telemetry-stack peripheral">
+          <div className="column-label">
+            <span>HOST TELEMETRY</span>
+            <b>01 / LIVE</b>
           </div>
-          <div className="session-label">
-            SESSION / LOCAL
-            <br />
+          <Panel title="PROCESSOR" code="CPU">
+            <Metric name="UTILIZATION" value={stats?.cpu} values={graphs.cpu} />
+            <div className="data-strip">
+              <span>
+                THERMAL <b>{number(stats?.temperature)} °C</b>
+              </span>
+              <span>
+                PROCESSES <b>{stats?.processCount ?? '—'}</b>
+              </span>
+            </div>
+          </Panel>
+          <Panel title="MEMORY ARRAY" code="RAM">
+            <Metric name="LOAD" value={stats?.ram} values={graphs.ram} />
+            <div className="data-strip">
+              <span>
+                USED <b>{stats ? gb(stats.ramUsed) : '—'}</b>
+              </span>
+              <span>
+                TOTAL <b>{stats ? gb(stats.ramTotal) : '—'}</b>
+              </span>
+            </div>
+          </Panel>
+          <Panel title="GRAPHICS" code="GPU">
+            <Metric name="ENGINE LOAD" value={stats?.gpu} values={graphs.gpu} />
+            <div className="data-strip">
+              <span>
+                VRAM <b>{stats?.vram != null ? stats.vram.toFixed(0) + ' MB' : '—'}</b>
+              </span>
+            </div>
+            <p className="hardware-name">{stats?.gpuName || 'SENSOR UNAVAILABLE'}</p>
+          </Panel>
+          <div className="host-sensors">
+            <div>
+              <span>DISK LOAD</span>
+              <b>{number(stats?.disk)}%</b>
+            </div>
+            <div>
+              <span>NETWORK ↓</span>
+              <b>{stats ? (stats.download / 1024).toFixed(1) + ' KB/s' : '—'}</b>
+            </div>
+            <div>
+              <span>NETWORK ↑</span>
+              <b>{stats ? (stats.upload / 1024).toFixed(1) + ' KB/s' : '—'}</b>
+            </div>
+            <div>
+              <span>BATTERY</span>
+              <b>{stats?.battery == null ? 'AC / UNAVAILABLE' : number(stats.battery) + '%'}</b>
+            </div>
+          </div>
+          <button className="technical-link" onClick={() => selectPage('SYSTEM')}>
+            HOST PROCESS INVENTORY ↗
+          </button>
+        </aside>
+        <section className="core-zone">
+          <div className="core-superlabel">
+            MAATOUK NEURAL ARCHITECTURE <span>MI–01</span>
+          </div>
+          <Reactor state={coreState} level={state === 'SPEAKING' ? outputLevel : voice.level} />
+          <div className="core-readout">
+            <i className={'status-dot ' + (state === 'ERROR' ? 'error' : '')} />
+            <span>{coreState}</span>
             <b>
-              {clock.toLocaleDateString('en-CA')} <span>{clock.toLocaleTimeString('en-GB')}</span>
+              {config?.mock ? 'SIMULATION' : window.jarvis ? 'REAL ACTION MODE' : 'DESKTOP PREVIEW'}
             </b>
+          </div>
+          <div className="core-data-rail">
+            <span>VERIFIED ACTIONS</span>
+            <span>BOUND CONTEXT</span>
+            <span>HOST SAFETY</span>
+          </div>
+        </section>
+        <aside className="intelligence-stack peripheral">
+          <div className="column-label">
+            <span>INTELLIGENCE LINK</span>
+            <b>02 / AGENT</b>
+          </div>
+          <Panel title="AI CONNECTION" code={aiUsage?.processing || 'LOCAL'}>
+            <div className="provider-readout">
+              <small>ACTIVE PROVIDER</small>
+              <b>{selectedProvider.toUpperCase()}</b>
+              <span>{aiUsage?.model || config?.model || 'UNCONFIGURED'}</span>
+            </div>
+            <div className="data-strip">
+              <span>
+                REQUESTS <b>{aiUsage?.requests ?? 0}</b>
+              </span>
+              <span>
+                TOKENS{' '}
+                <b>
+                  {aiUsage ? (aiUsage.inputTokens + aiUsage.outputTokens).toLocaleString() : '—'}
+                </b>
+              </span>
+            </div>
+            <p className="link-state">
+              {config?.cloudEnabled
+                ? 'CLOUD ROUTING AVAILABLE'
+                : online
+                  ? 'LOCAL SERVICE CONNECTED'
+                  : 'LOCAL SERVICE UNAVAILABLE'}
+            </p>
+            <button className="technical-link" onClick={() => openSettings('AI')}>
+              CONFIGURE BRAIN ↗
+            </button>
+          </Panel>
+          <Panel title="PERCEPTION" code={screenContext?.gaming ? 'GAME' : 'VISION'}>
+            <dl className="status-list">
+              <div>
+                <dt>SCREEN</dt>
+                <dd>{config?.vision?.toUpperCase() || 'MANUAL'}</dd>
+              </div>
+              <div>
+                <dt>CONTEXT</dt>
+                <dd>
+                  {screenContext?.stale ? 'STALE' : screenContext?.active ? 'ACTIVE' : 'WAITING'}
+                </dd>
+              </div>
+              <div>
+                <dt>MICROPHONE</dt>
+                <dd>
+                  {voice.listening ? 'LISTENING' : voice.transcribing ? 'TRANSCRIBING' : 'IDLE'}
+                </dd>
+              </div>
+              <div>
+                <dt>VOICE</dt>
+                <dd>{config?.ttsEngine?.toUpperCase() || 'LOCAL'}</dd>
+              </div>
+            </dl>
+            <p className="active-window">
+              {screenContext?.activeWindow?.title ||
+                browserState?.windows.find((w) => w.foreground)?.title ||
+                'No current window observation'}
+            </p>
+            <button
+              className="technical-link"
+              onClick={() => {
+                selectPage('VISION');
+              }}
+            >
+              SCREEN OBSERVATION ↗
+            </button>
+          </Panel>
+          <Panel title="TOOL NETWORK" code="MCP">
+            <div className="plugin-count">
+              <b>{plugins.filter((p) => p.enabled && p.status === 'connected').length}</b>
+              <span>
+                CONNECTED
+                <br />
+                CAPABILITIES
+              </span>
+            </div>
+            <div className="tool-signal">
+              {plugins
+                .filter((p) => p.enabled)
+                .slice(0, 9)
+                .map((p) => (
+                  <i
+                    key={p.id}
+                    title={p.name}
+                    className={p.status === 'connected' ? 'connected' : ''}
+                  />
+                ))}
+            </div>
+            <button className="technical-link" onClick={() => openSettings('PLUGINS')}>
+              PLUGIN REGISTRY ↗
+            </button>
+          </Panel>
+        </aside>
+        {settingsOpen && !settingCategory && (
+          <div className="settings-orbit" role="dialog" aria-label="Radial settings">
+            <div className="orbit-guide" />
+            {categories.map((c, i) => {
+              const angle = ((i * 45 - 90) * Math.PI) / 180;
+              return (
+                <button
+                  key={c}
+                  className="orbit-node"
+                  style={
+                    {
+                      '--node-x': Math.cos(angle),
+                      '--node-y': Math.sin(angle),
+                      '--node-delay': i * 45 + 'ms',
+                    } as React.CSSProperties
+                  }
+                  onClick={() => setSettingCategory(c)}
+                >
+                  <small>{String(i + 1).padStart(2, '0')}</small>
+                  <b>{c}</b>
+                </button>
+              );
+            })}
+            <button className="orbit-close" onClick={() => setSettingsOpen(false)}>
+              RETURN TO COMMAND
+            </button>
+          </div>
+        )}
+        {settingsOpen && settingCategory && config && (
+          <ControlDeck
+            key={settingCategory}
+            category={settingCategory}
+            config={config}
+            save={save}
+            onBack={() => setSettingCategory(null)}
+            onClose={() => {
+              setSettingsOpen(false);
+              setSettingCategory(null);
+            }}
+            onObserve={() => {
+              setSettingsOpen(false);
+              selectPage('VISION');
+              void analyze();
+            }}
+            onVoice={() => speak('JARVIS voice system ready.')}
+            onSetup={() => setSetup(true)}
+          />
+        )}
+        {briefingVisible && briefing && !settingsOpen && page === 'HOME' && (
+          <BriefingView
+            key={briefing.id}
+            briefing={briefing}
+            onNarrate={narrate}
+            onInterrupt={() => {
+              void interrupt();
+            }}
+            onClose={() => setBriefingVisible(false)}
+            interrupted={voice.listening && voice.level > 0.06}
+            autoStart={autoNarration}
+          />
+        )}
+        {page !== 'HOME' && !settingsOpen && (
+          <UtilityDrawer
+            key={page}
+            kind={page}
+            memories={memories}
+            tasks={tasks}
+            logs={logs}
+            stats={stats}
+            vision={vision}
+            close={() => setPage('HOME')}
+            refreshMemories={setMemories}
+            onObserve={() => void analyze()}
+            messages={messages}
+          />
+        )}
+      </main>
+      <section className="command-dock">
+        <div className="task-rail">
+          <span className="eyebrow">{active ? 'ACTIVE PLAN' : 'COMMAND SYSTEM'}</span>
+          <b>
+            {currentStep
+              ? currentStep.tool.replaceAll('_', ' ').toUpperCase()
+              : active?.title || 'READY FOR A NEW INTENTION'}
+          </b>
+          <span>
+            {active
+              ? active.steps.filter((s) => s.status === 'done').length + ' COMPLETED STEPS'
+              : voice.status}
+          </span>
+          <div className="compact-tools">
+            <button aria-label="Conversation history" onClick={() => selectPage('HISTORY')}>
+              HISTORY
+            </button>
+            <button aria-label="Saved memory" onClick={() => selectPage('MEMORY')}>
+              MEMORY
+            </button>
+            <button aria-label="Task history" onClick={() => selectPage('TASKS')}>
+              TASKS
+            </button>
+            <button aria-label="Audit log" onClick={() => selectPage('LOGS')}>
+              LOGS
+            </button>
+            {briefing && (
+              <button
+                onClick={() => {
+                  setBriefingVisible(true);
+                  setPage('HOME');
+                  setSettingsOpen(false);
+                }}
+              >
+                BRIEFING
+              </button>
+            )}
           </div>
         </div>
-        {!window.jarvis && (
-          <div className="preview-banner">
-            DESIGN PREVIEW — launch JARVIS desktop for telemetry, voice and automation. No simulated
-            data is presented as live.
-          </div>
-        )}
-        {window.jarvis && config?.mock && (
-          <div className="preview-banner" role="alert">
-            SIMULATION IS ON — apps will not open and PC actions will not happen.{' '}
-            <button onClick={() => void save({ ...config, mock: false })}>
-              ENABLE REAL CONTROL
-            </button>
-          </div>
-        )}
-        <section className="context-strip" aria-label="Live assistant context">
-          <span>
-            SCREEN CONTEXT{' '}
-            <b>{screenContext?.active ? 'ACTIVE' : config?.vision === 'off' ? 'OFF' : 'WAITING'}</b>
-          </span>
-          <span>
-            ACTIVE WINDOW <b>{screenContext?.activeWindow?.title || '—'}</b>
-          </span>
-          <span>
-            AI <b>{config?.model || '—'}</b>
-          </span>
-          <span>
-            VISION AI <b>{config?.visionModel || '—'}</b>
-          </span>
-          <span>
-            GAMING <b>{screenContext?.gaming ? 'ACTIVE' : 'OFF'}</b>
-          </span>
-          <span>
-            MICROPHONE <b>{voice.status}</b>
-          </span>
-          <span>
-            BROWSER{' '}
-            <b>
-              {browserState?.windows.find((w) => w.foreground)?.url ||
-                browserState?.windows[0]?.url ||
-                'NOT OBSERVED'}
-            </b>
-          </span>
-        </section>
-        {page === 'VISION' && screenContext && (
-          <Panel title="SCREEN CONTEXT & EVENTS" code="CONTEXT / LIVE">
-            <p>
-              {screenContext.summary ||
-                'Waiting for a meaningful screen change or a requested observation.'}
-            </p>
-            <div className="context-events">
-              {screenContext.events
-                .slice(-12)
-                .reverse()
-                .map((event, index) => (
-                  <div key={event.time + ':' + index}>
-                    <time>{new Date(event.time).toLocaleTimeString()}</time>
-                    <span>{event.text}</span>
-                  </div>
-                ))}
-            </div>
-            <p className="help">
-              Current observations are temporary. Screenshots and this event timeline are not saved
-              to long-term memory.
-            </p>
-          </Panel>
-        )}
-        {page === 'HOME' && (
-          <div className="home-grid">
-            <div className="left-column">
-              <Panel title="SYSTEM TELEMETRY" code="SYS / 01">
-                <div className="telemetry-summary">
-                  <div
-                    className="radial"
-                    style={{ '--progress': `${stats?.cpu ?? 0}%` } as React.CSSProperties}
-                  >
-                    <b>
-                      {number(stats?.cpu)}
-                      <small>CPU LOAD</small>
-                    </b>
-                  </div>
-                  <div className="telemetry-info">
-                    <span>PROCESSING UNIT</span>
-                    <strong>{stats?.processCount ?? '—'} PROCESSES</strong>
-                    <small>
-                      {stats?.temperature != null
-                        ? `${number(stats.temperature)}°C CORE TEMP`
-                        : 'TEMPERATURE UNAVAILABLE'}
-                    </small>
-                  </div>
-                </div>
-                <Metric name="CPU UTILIZATION" value={stats?.cpu} values={graphs.cpu} />
-                <Metric name="MEMORY ALLOCATION" value={stats?.ram} values={graphs.ram} />
-                <Metric name="GPU UTILIZATION" value={stats?.gpu} values={graphs.gpu} />
-                <div className="panel-footer">
-                  {stats ? gb(stats.ramUsed) + ' / ' + gb(stats.ramTotal) : 'WAITING FOR TELEMETRY'}
-                  <span>3 SEC POLL</span>
-                </div>
-              </Panel>
-              <Panel title="NETWORK UPLINK" code="NET / 02">
-                <div className="network-row">
-                  <span>↓ RECEIVE</span>
-                  <b>
-                    {stats ? number(stats.download / 1024, 1) : '—'} <small>KB/S</small>
-                  </b>
-                </div>
-                <div className="network-row">
-                  <span>↑ TRANSMIT</span>
-                  <b>
-                    {stats ? number(stats.upload / 1024, 1) : '—'} <small>KB/S</small>
-                  </b>
-                </div>
-                <div className="network-grid">
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                  <i />
-                </div>
-                <div className="panel-footer">
-                  {aiUsage?.processing || 'LOCAL'} PROCESSING
-                  <span>{aiUsage?.provider.toUpperCase() || 'OLLAMA'}</span>
-                </div>
-              </Panel>
-            </div>
-            <div className="center-column">
-              <div className="core-label">
-                <i className="status-dot" />
-                NEURAL CORE <span>ONLINE INTERFACE / V.01</span>
+        <div className="recent-conversation" aria-live="polite">
+          {displayMessage.length ? (
+            displayMessage.map((m) => (
+              <div key={m.id}>
+                <small>
+                  {m.role} <span>{m.time}</span>
+                </small>
+                <p>{m.text}</p>
               </div>
-              <Core state={state} level={voice.level} />
-              <div className={`state-badge ${state.includes('CONFIRMATION') ? 'warning' : ''}`}>
-                <span /> {state} <span />
-              </div>
-              <p className="core-caption">
-                {active
-                  ? active.title
-                  : online
-                    ? 'Ready when you are.'
-                    : 'Configure an AI provider in Settings.'}
-              </p>
-              <div className="core-actions">
-                <button
-                  disabled={!config || !config.microphone}
-                  onClick={voice.toggle}
-                  className={voice.listening ? 'primary' : ''}
-                >
-                  {voice.listening
-                    ? '■ PAUSE LISTENING'
-                    : config?.conversationMode
-                      ? '◉ RESUME CONVERSATION'
-                      : '◉ PUSH TO TALK'}
-                </button>
-                <button
-                  onClick={() => {
-                    selectPage('VISION');
-                    void analyze();
-                  }}
-                >
-                  ⌖ OBSERVE SCREEN
-                </button>
-              </div>
-              <Panel title="AUDIO SPECTRUM" code={voice.listening ? 'MIC / LIVE' : 'MIC / STANDBY'}>
-                <Waveform level={voice.level} />
-                <div className="panel-footer">
-                  {config?.conversationMode
-                    ? 'HANDS-FREE CONVERSATION'
-                    : config?.wakeEnabled
-                      ? 'WAKE PHRASE: ' + config.wakeWord.toUpperCase()
-                      : 'PUSH-TO-TALK MODE'}
-                  <span>
-                    {voice.transcribing
-                      ? 'RECOGNIZING SPEECH'
-                      : voice.listening
-                        ? 'LISTENING'
-                        : 'MIC PAUSED'}
-                  </span>
-                </div>
-              </Panel>
-            </div>
-            <div className="right-column">
-              <Panel title="ENVIRONMENT STATUS" code="ENV / 03">
-                <div className="clock-display">
-                  {clock.toLocaleTimeString('en-GB')}
-                  <small>
-                    {clock
-                      .toLocaleDateString(undefined, {
-                        weekday: 'long',
-                        month: 'long',
-                        day: 'numeric',
-                      })
-                      .toUpperCase()}
-                  </small>
-                </div>
-                <div className="status-table">
-                  {[
-                    [
-                      'AI PROVIDER',
-                      aiUsage?.provider.toUpperCase() || config?.provider.toUpperCase() || 'OLLAMA',
-                    ],
-                    [
-                      'AI MODEL',
-                      aiUsage?.model ||
-                        (config?.provider === 'openai'
-                          ? config.openaiModel
-                          : config?.provider === 'anthropic'
-                            ? config.anthropicModel
-                            : config?.model) ||
-                        'NOT SELECTED',
-                    ],
-                    ['FALLBACK', config?.fallbackProvider.toUpperCase() || 'NONE'],
-                    ['PROCESSING', aiUsage?.processing || 'LOCAL'],
-                    [
-                      'PLUGIN STATUS',
-                      `${plugins.filter((p) => p.enabled && p.status === 'connected').length} CONNECTED`,
-                    ],
-                    [
-                      'AGENT STEP',
-                      active ? `${active.steps.length} / ${config?.agentMaxSteps || 24}` : 'IDLE',
-                    ],
-                    ['CURRENT PLAN', active?.stage?.toUpperCase() || 'STANDBY'],
-                    [
-                      'CURRENT TOOL',
-                      active?.steps.find((s) => ['running', 'waiting'].includes(s.status))?.tool ||
-                        'NONE',
-                    ],
-                    [
-                      'SESSION USAGE',
-                      `${aiUsage?.requests || 0} REQUESTS · ${(aiUsage?.inputTokens || 0) + (aiUsage?.outputTokens || 0)} TOKENS`,
-                    ],
-                    ['CLOUD REQUESTS', String(aiUsage?.cloudRequests || 0)],
-                    ['CONFIRMATION', confirmation ? 'WAITING' : 'CLEAR'],
-                    [
-                      'MICROPHONE',
-                      !config?.microphone
-                        ? 'DISABLED'
-                        : voice.listening
-                          ? 'LISTENING'
-                          : voice.status,
-                    ],
-                    ['SCREEN VISION', config?.vision?.toUpperCase() || 'DESKTOP ONLY'],
-                    ['WAKE PHRASE', config?.wakeEnabled ? config.wakeWord : 'DISABLED'],
-                    ['CONTROL MODE', !config ? 'PREVIEW' : config.mock ? 'MOCK / SAFE' : 'LIVE'],
-                    ['GPU', stats?.gpuName || 'UNAVAILABLE'],
-                  ].map(([k, v]) => (
-                    <div key={k}>
-                      <span>{k}</span>
-                      <b>{v}</b>
-                    </div>
-                  ))}
-                </div>
-                <button className="text-button" onClick={() => void refresh()}>
-                  ↻ RECHECK CONNECTION
-                </button>
-              </Panel>
-              <Panel title="ACTION PIPELINE" code="TASK / 04">
-                {active ? (
-                  <div className="mini-plan">
-                    <p>{active.title}</p>
-                    {active.steps.map((s, i) => (
-                      <div key={i}>
-                        <i className={s.status === 'done' ? 'done' : ''} />
-                        <span>{s.tool.replaceAll('_', ' ')}</span>
-                        <small>{s.status.toUpperCase()}</small>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="standby">
-                    <div className="radar">
-                      <i />
-                      <i />
-                      <b />
-                    </div>
-                    <span>ALL SYSTEMS STANDING BY</span>
-                    <small>{tasks.length} LOCAL TASKS IN HISTORY</small>
-                  </div>
-                )}
-                <div className="panel-footer">
-                  GUARDED EXECUTION<span>SAFETY ACTIVE</span>
-                </div>
-              </Panel>
-            </div>
-          </div>
-        )}
-        {page === 'VISION' && (
-          <div className="two-column">
-            <Panel title="VISUAL SENSOR" code="SCREEN / CAPTURE">
-              <div className="vision-preview">
-                {vision ? (
-                  <img src={vision.preview} alt="Last screen capture" />
-                ) : (
-                  <div className="empty-sensor">
-                    <span>⌖</span>
-                    <h3>Awaiting visual input</h3>
-                    <p>Capture and analyze your selected monitor on demand.</p>
-                  </div>
-                )}
-              </div>
-              <div className="toolbar">
-                <button className="primary" disabled={busy} onClick={() => void analyze()}>
-                  ANALYZE SCREEN
-                </button>
-                <span>
-                  {vision
-                    ? `MONITOR ${vision.monitor} / ${vision.width} × ${vision.height}`
-                    : 'SCREENSHOTS ARE NOT SAVED'}
-                </span>
-              </div>
-            </Panel>
-            <Panel title="SCENE INTERPRETATION" code="VISION / LOCAL">
-              <p className="analysis-text">
-                {vision?.description ||
-                  'Choose a vision model in Settings. Background screen analysis stays local.'}
-              </p>
-              <div className="panel-footer">
-                LAST ANALYSIS
-                <span>{vision ? new Date(vision.analyzed).toLocaleTimeString() : '—'}</span>
-              </div>
-              <label className="field-label">
-                LOCATE AN INTERFACE ELEMENT
-                <input
-                  value={target}
-                  onChange={(e) => setTarget(e.target.value)}
-                  placeholder="e.g. the Submit button"
-                />
-              </label>
-              <button
-                disabled={!target || busy}
-                onClick={async () => {
-                  if (!window.jarvis) return;
-                  try {
-                    setLocated(await unwrap(window.jarvis.locate(target)));
-                  } catch (e) {
-                    report(String(e));
-                  }
-                }}
-              >
-                LOCATE ELEMENT
-              </button>
-              {located && (
-                <p className="coordinates">
-                  {located.label}
-                  <br />X {located.x} / Y {located.y} / CONFIDENCE{' '}
-                  {number(located.confidence * 100)}%<br />
-                  Coordinates are advisory. Verify them visually before approving a click.
-                </p>
-              )}
-            </Panel>
-          </div>
-        )}
-        {page === 'SYSTEM' && (
-          <div className="system-grid">
-            <Panel title="RESOURCE MATRIX" code="HARDWARE">
-              <Metric name="CPU" value={stats?.cpu} values={graphs.cpu} />
-              <Metric name="RAM" value={stats?.ram} values={graphs.ram} />
-              <Metric name="GPU" value={stats?.gpu} values={graphs.gpu} />
-              <Metric
-                name="DISK CAPACITY"
-                value={stats?.disk}
-                values={[stats?.disk ?? 0, stats?.disk ?? 0]}
-              />
-              <div className="status-table">
-                {[
-                  ['GPU', stats?.gpuName],
-                  ['VRAM', stats?.vram != null ? `${stats.vram} MB` : 'Unavailable'],
-                  ['BATTERY', stats?.battery != null ? `${stats.battery}%` : 'No battery'],
-                  ['DISK READ', number(stats?.diskRead)],
-                  ['DISK WRITE', number(stats?.diskWrite)],
-                ].map(([k, v]) => (
-                  <div key={k}>
-                    <span>{k}</span>
-                    <b>{v || '—'}</b>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-            <Panel title="PROCESS INTELLIGENCE" code="TOP RAM">
-              <table>
-                <thead>
-                  <tr>
-                    <th>PROCESS</th>
-                    <th>PID</th>
-                    <th>RAM / MB</th>
-                    <th>CPU %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats?.processes?.map((p) => (
-                    <tr key={p.pid}>
-                      <td>{p.name}</td>
-                      <td>{p.pid}</td>
-                      <td>{number(p.ram / 1024 ** 2, 1)}</td>
-                      <td>{number(p.cpu, 1)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Panel>
-          </div>
-        )}
-        {page === 'TASKS' && (
-          <Panel title="EXECUTION HISTORY" code={`${tasks.length} TASKS`}>
-            <div className="task-list">
-              {tasks.length ? (
-                tasks.map((t) => (
-                  <article className="task-card" key={t.id}>
-                    <header>
-                      <span>TASK / {t.id.slice(0, 8).toUpperCase()}</span>
-                      <b className={t.status === 'failed' ? 'danger-text' : ''}>
-                        {t.status.toUpperCase()}
-                      </b>
-                    </header>
-                    <h3>{t.title}</h3>
-                    <small>
-                      {new Date(t.created).toLocaleString()}
-                      {t.finished ? ` / ${((t.finished - t.created) / 1000).toFixed(1)} sec` : ''}
-                    </small>
-                    {t.steps.map((s, i) => (
-                      <div className="task-step" key={i}>
-                        <span>{String(i + 1).padStart(2, '0')}</span>
-                        <b>{s.tool}</b>
-                        <small>LEVEL {s.risk}</small>
-                        <em>{s.status}</em>
-                        {s.error && <p>{s.error}</p>}
-                      </div>
-                    ))}
-                  </article>
-                ))
-              ) : (
-                <div className="empty-state">
-                  No tasks yet. Ask JARVIS to perform an action after connecting a tool-capable
-                  model.
-                </div>
-              )}
-            </div>
-          </Panel>
-        )}
-        {page === 'MEMORY' && (
-          <div className="two-column">
-            <Panel title="LOCAL KNOWLEDGE" code={`${memories.length} MEMORIES`}>
-              {memories.length ? (
-                memories.map((m) => (
-                  <article className="memory-card" key={m.id}>
-                    <small>{m.category.toUpperCase()}</small>
-                    <p>{m.content}</p>
-                    <button
-                      onClick={() => {
-                        setNote(m.content);
-                        setCategory(m.category);
-                        setEditId(m.id);
-                      }}
-                    >
-                      EDIT
-                    </button>
-                    <button
-                      onClick={async () => {
-                        if (window.confirm('Delete this memory?') && window.jarvis)
-                          setMemories(await unwrap(window.jarvis.forget(m.id)));
-                      }}
-                    >
-                      DELETE
-                    </button>
-                  </article>
-                ))
-              ) : (
-                <div className="empty-state">No memories stored. Add information explicitly.</div>
-              )}
-              <button
-                onClick={async () => {
-                  if (window.confirm('Clear all local memories?') && window.jarvis) {
-                    await unwrap(window.jarvis.clearMemory());
-                    setMemories([]);
-                  }
-                }}
-              >
-                CLEAR ALL MEMORIES
-              </button>
-            </Panel>
-            <Panel title={editId ? 'EDIT MEMORY' : 'CREATE MEMORY'} code="SQLITE / LOCAL">
-              <label className="field-label">
-                CATEGORY
-                <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                  {[
-                    'preferences',
-                    'people',
-                    'applications',
-                    'commands',
-                    'shortcuts',
-                    'notes',
-                    'summaries',
-                  ].map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field-label">
-                CONTENT
-                <textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  rows={7}
-                  placeholder="Remember a preference, shortcut, or note…"
-                />
-              </label>
-              <p className="help">
-                Store only information you choose. Do not enter passwords or financial credentials.
-              </p>
-              <button
-                className="primary"
-                disabled={!note.trim()}
-                onClick={async () => {
-                  if (!window.jarvis) return;
-                  try {
-                    setMemories(await unwrap(window.jarvis.remember(category, note, editId)));
-                    setNote('');
-                    setEditId(undefined);
-                  } catch (e) {
-                    report(String(e));
-                  }
-                }}
-              >
-                SAVE MEMORY
-              </button>
-            </Panel>
-          </div>
-        )}
-        {page === 'AUTOMATION' && (
-          <div className="two-column">
-            <Panel title="CONTROL CAPABILITIES" code="GUARDED TOOLS">
-              <div className="status-table">
-                {(['mouse', 'keyboard', 'browser', 'filesystem', 'powershell'] as const).map(
-                  (k) => (
-                    <div key={k}>
-                      <span>{k.toUpperCase()}</span>
-                      <b>{config?.[k] ? 'ENABLED' : 'DISABLED'}</b>
-                    </div>
-                  ),
-                )}
-              </div>
-              <p className="help">
-                Each action is validated and assigned a fixed risk level before execution. Change
-                permissions in Settings. Mock mode simulates mutations.
-              </p>
-              <button onClick={() => selectPage('SETTINGS')}>CONFIGURE PERMISSIONS →</button>
-            </Panel>
-            <Panel title="SAFETY INTERLOCK" code="ALWAYS ACTIVE">
-              <div className="safety-seal">
-                ◇<span>PROTECTED</span>
-              </div>
-              <p className="analysis-text">
-                Approvals cover one exact action. The assistant cannot execute arbitrary shell
-                commands, elevate itself, or disable confirmation.
-              </p>
-              <button className="danger" onClick={() => void stop()}>
-                EMERGENCY STOP
-              </button>
-              <p className="help">
-                CTRL + SHIFT + BACKSPACE stops the queue. It cannot undo an action already executed.
-              </p>
-            </Panel>
-          </div>
-        )}
-        {page === 'FILES' && (
-          <Panel title="FILESYSTEM WORKSPACE" code="EXPLICIT REQUESTS">
-            <p className="analysis-text">
-              {config?.fileAccess === 'computer'
-                ? 'Computer access • Default folder: '
-                : 'Allowed folder: '}
-              {config?.fileRoot || 'Choose a folder in Settings.'}
-            </p>
-            <p className="help">
-              {config?.fileAccess === 'computer'
-                ? 'Local drive paths are available under your Windows permissions. '
-                : 'Access is limited to the selected folder. '}
-              Searches return bounded results; specify a directory to narrow them. Moves and renames
-              require approval. Deletions go to the Recycle Bin after critical confirmation.
-            </p>
-            <label className="field-label">
-              FILENAME SEARCH
-              <input
-                value={files}
-                onChange={(e) => setFiles(e.target.value)}
-                placeholder="Enter a filename to search"
-              />
-            </label>
-            <button
-              className="primary"
-              disabled={!files}
-              onClick={() =>
-                void command(`Search files for ${JSON.stringify(files)} in my default folder.`)
-              }
-            >
-              SEARCH WITH JARVIS
-            </button>
-          </Panel>
-        )}
-        {page === 'PLUGINS' && config && (
-          <Panel title="PLUGIN CONNECTIONS" code="CAPABILITIES / MCP">
-            <PluginManager config={config} save={save} />
-          </Panel>
-        )}
-        {page === 'SETTINGS' &&
-          (config ? (
-            <Settings config={config} models={models} save={save} refresh={() => void refresh()} />
+            ))
           ) : (
-            <div className="empty-state">Settings are available in the desktop application.</div>
-          ))}
-        {page === 'LOGS' && (
-          <Panel title="AUDIT STREAM" code="METADATA ONLY">
-            <div className="toolbar">
-              <button onClick={() => selectPage('LOGS')}>REFRESH LOGS</button>
-              <span>CONTENT AND CREDENTIALS ARE EXCLUDED</span>
+            <div className="welcome-line">
+              <small>JARVIS / MAATOUK INDUSTRIES</small>
+              <p>Say an intention. I’ll reason, observe, act and verify.</p>
             </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>TIME</th>
-                  <th>EVENT</th>
-                  <th>TOOL</th>
-                  <th>RISK</th>
-                  <th>STATUS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((l, i) => (
-                  <tr key={i}>
-                    <td>{new Date(l.time).toLocaleTimeString()}</td>
-                    <td>
-                      {l.event}
-                      {l.diagnostic && (
-                        <details>
-                          <summary>Technical details</summary>
-                          <pre>{l.diagnostic}</pre>
-                        </details>
-                      )}
-                    </td>
-                    <td>{l.tool || '—'}</td>
-                    <td>{l.risk ?? '—'}</td>
-                    <td>{l.status || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!logs.length && <div className="empty-state">No audit events in this session.</div>}
-          </Panel>
-        )}
-        <section className="console">
-          <header>
-            <h2>
-              <i className="status-dot" /> COMMAND CONSOLE
-            </h2>
-            <span>LOCAL SESSION / {messages.length} ENTRIES</span>
-            <button className="text-button" onClick={() => setMessages([])}>
-              CLEAR
-            </button>
-          </header>
-          <div className="conversation" ref={feed} role="log" aria-label="Conversation">
-            {messages.map((m) => (
-              <div className={`message ${m.role.toLowerCase()}`} key={m.id}>
-                <time>{m.time}</time>
-                <b>{m.role}</b>
-                <span>{m.text}</span>
-              </div>
-            ))}
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const text = input;
-              setInput('');
-              void command(text);
+          )}
+        </div>
+        <form
+          className="command-strip"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const text = input;
+            setInput('');
+            void command(text);
+          }}
+        >
+          <span className="command-prefix">MI /</span>
+          <input
+            aria-label="Command JARVIS"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                const n = Math.min(history.length - 1, historyIndex + 1);
+                setHistoryIndex(n);
+                setInput(history[n] || '');
+              }
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                const n = Math.max(-1, historyIndex - 1);
+                setHistoryIndex(n);
+                setInput(n < 0 ? '' : history[n] || '');
+              }
+            }}
+            placeholder={
+              busy
+                ? 'Task in progress · say cancel to stop'
+                : 'Speak naturally, or enter an intention…'
+            }
+          />
+          <button type="submit" disabled={!input.trim() || busy} aria-label="Send command">
+            ↗
+          </button>
+          <button
+            type="button"
+            className={voice.listening ? 'mic-button active' : 'mic-button'}
+            aria-label={voice.listening ? 'Pause microphone' : 'Start microphone'}
+            onClick={() => voice.toggle()}
+          >
+            ◉ <span>{voice.listening ? 'LIVE' : 'MIC'}</span>
+          </button>
+          <button type="button" className="emergency" onClick={() => void stop()}>
+            ■ STOP
+          </button>
+          <button
+            type="button"
+            className="settings-toggle"
+            aria-label="Open radial settings"
+            onClick={() => {
+              if (settingsOpen) {
+                setSettingsOpen(false);
+                setSettingCategory(null);
+              } else openSettings();
             }}
           >
-            <span className="prompt-symbol">›</span>
-            <input
-              aria-label="Command"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Give JARVIS a command…"
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  const n = Math.min(historyIndex + 1, history.length - 1);
-                  setHistoryIndex(n);
-                  setInput(history[n] || '');
-                }
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  const n = Math.max(historyIndex - 1, -1);
-                  setHistoryIndex(n);
-                  setInput(n < 0 ? '' : history[n]);
-                }
-              }}
-            />
-            <button
-              type="button"
-              disabled={!config || !config.microphone}
-              onClick={voice.toggle}
-              aria-label="Toggle microphone"
-            >
-              {voice.listening ? '■' : '◉'}
-            </button>
-            <button className="primary" disabled={busy || !input.trim()} type="submit">
-              EXECUTE ↗
-            </button>
-          </form>
-        </section>
-      </main>
-      <footer className="statusbar">
+            ⚙
+          </button>
+        </form>
+      </section>
+      <footer className="system-footer">
+        <span>MAATOUK INDUSTRIES © {clock.getFullYear()}</span>
         <span>
-          <i className="status-dot" /> JARVIS / LOCAL-FIRST
+          {config?.fileAccess === 'computer' ? 'ACCESSIBLE LOCAL DRIVES' : 'SELECTED FILE SCOPE'} ·
+          ACTION CONFIRMATIONS ACTIVE
         </span>
-        <span>
-          {online ? 'AI CONNECTED' : 'AI UNAVAILABLE'} · {aiUsage?.processing || 'LOCAL'} ·{' '}
-          {config?.vision === 'off'
-            ? 'VISION OFF'
-            : 'VISION ' + (config?.vision?.toUpperCase() || 'DESKTOP ONLY')}
-        </span>
-        <span>
-          SAFETY INTERLOCK ENGAGED <b>●</b>
-        </span>
+        <button onClick={() => openSettings('PRIVACY')}>
+          PRIVACY / {config?.cloudEnabled ? 'CLOUD AVAILABLE' : 'LOCAL'}
+        </button>
       </footer>
-      {confirmation && (
-        <div className="modal-shade">
-          <section
-            className="confirmation-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="confirm-title"
-          >
-            <span className="eyebrow warning">SAFETY INTERLOCK / LEVEL {confirmation.risk}</span>
-            <h1 id="confirm-title">Authorization required.</h1>
-            <p>Review the exact action before allowing JARVIS to proceed.</p>
-            <pre>{JSON.stringify(confirmation.action, null, 2)}</pre>
-            {confirmation.action.tool === 'delete_file' && (
-              <p className="danger-text">
-                This deletes the selected file into the Recycle Bin. Permanent deletion is blocked.
-              </p>
-            )}
-            <p className="help">
-              Expires at {new Date(confirmation.expires).toLocaleTimeString()}. Focus the correct
-              target window before approving keyboard or mouse input. Mock mode:{' '}
-              {config?.mock ? 'ON' : 'OFF'}
-            </p>
-            <footer>
-              <button
-                onClick={async () => {
-                  const c = confirmation;
-                  setConfirmation(null);
-                  try {
-                    await unwrap(window.jarvis!.confirm(c.id, false));
-                  } catch (e) {
-                    report(String(e));
-                  }
-                }}
-              >
-                DENY
-              </button>
-              <button
-                className="primary"
-                onClick={async () => {
-                  const c = confirmation;
-                  setConfirmation(null);
-                  try {
-                    await unwrap(window.jarvis!.confirm(c.id, true));
-                  } catch (e) {
-                    report(String(e));
-                  }
-                }}
-              >
-                AUTHORIZE THIS ACTION
-              </button>
-            </footer>
-          </section>
+      {messages.at(-1)?.role === 'SYSTEM' && (
+        <div className="hud-notification" key={messages.at(-1)?.id} role="status">
+          <i />
+          <span>{messages.at(-1)?.text}</span>
         </div>
+      )}
+      {config?.mock && (
+        <div className="simulation-warning" role="alert">
+          SIMULATION MODE · PC mutations are disabled{' '}
+          <button onClick={() => void save({ ...config, mock: false })}>ENABLE REAL CONTROL</button>
+        </div>
+      )}
+      {confirmation && (
+        <ConfirmationRing
+          key={confirmation.id}
+          confirmation={confirmation}
+          onDecision={(yes) => {
+            const c = confirmation;
+            setConfirmation(null);
+            if (window.jarvis)
+              void unwrap(window.jarvis.confirm(c.id, yes)).catch((e) => report(String(e)));
+          }}
+        />
       )}
       {setup && config && <Setup config={config} save={save} close={() => setSetup(false)} />}
-      {page === 'SETTINGS' && config?.tts && (
-        <div className="voice-selector">
-          <label>
-            {config.ttsEngine === 'piper' ? 'PIPER LOCAL VOICE' : 'LOCAL WINDOWS VOICE'}{' '}
-            {config.ttsEngine === 'piper' ? (
-              <span>{config.piperVoicePath.split(/[\\/]/).pop()}</span>
-            ) : (
-              <select value={voiceName} onChange={(e) => setVoiceName(e.target.value)}>
-                <option value="">System local default</option>
-                {voices.map((v) => (
-                  <option key={v.name}>{v.name}</option>
-                ))}
-              </select>
-            )}
-          </label>
-          <button onClick={() => speak('JARVIS voice system ready.')}>TEST VOICE</button>
-          <button onClick={() => setSetup(true)}>RUN SETUP CHECKS</button>
-        </div>
-      )}
     </div>
   );
 }

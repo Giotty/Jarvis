@@ -1,9 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { directIntent, screenRequest } = require('../core/intents.cjs');
+const { directIntent, screenRequest } = require('./legacy/intents.cjs');
 const { ScreenTargets } = require('../core/screen-targets.cjs');
 const { WindowsApps } = require('../core/windows-system.cjs');
-const { Planner } = require('../core/planner.cjs');
+const { Planner } = require('./legacy/planner.cjs');
 const { Safety } = require('../core/safety.cjs');
 const { Vision } = require('../core/vision.cjs');
 test('reported profile requests route to screen targets, while Steam and Epic launch normally', () => {

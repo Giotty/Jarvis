@@ -1,5 +1,7 @@
 const cheerio = require('cheerio');
 const dns = require('node:dns/promises');
+const http = require('node:http');
+const https = require('node:https');
 function publicAddress(address) {
   if (address.includes(':')) return /^2[0-9a-f]{3}:/i.test(address); // Global unicast only; no loopback, mapped IPv4 or local IPv6.
   const [a, b] = address.split('.').map(Number);
@@ -10,6 +12,7 @@ function publicAddress(address) {
     !(a === 169 && b === 254) &&
     !(a === 172 && b >= 16 && b <= 31) &&
     !(a === 192 && b === 168) &&
+    !(a === 198 && [18, 19].includes(b)) &&
     !(a === 100 && b >= 64 && b <= 127)
   );
 }
@@ -17,6 +20,7 @@ async function webGet(
   input,
   signal,
   accept = 'text/html,application/xhtml+xml,application/rss+xml,text/plain',
+  binary = false,
 ) {
   let url = new URL(input);
   for (let redirect = 0; redirect < 4; redirect++) {
@@ -30,26 +34,49 @@ async function webGet(
     const addresses = await dns.lookup(url.hostname.replace(/^\[|\]$/g, ''), { all: true });
     if (!addresses.length || addresses.some((a) => !publicAddress(a.address)))
       throw Error('Research cannot read local or private network addresses.');
-    const response = await fetch(url, {
-      redirect: 'manual',
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
-        : AbortSignal.timeout(12000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 JARVIS-Research/1.0',
-        Accept: accept,
-      },
+    const deadline = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
+      : AbortSignal.timeout(12000);
+    // Pin the validated addresses, including on redirects. A second DNS lookup
+    // must not let a public image/page redirect the connection into a private LAN.
+    const response = await new Promise((resolve, reject) => {
+      const request = (url.protocol === 'https:' ? https : http).get(
+        url,
+        {
+          signal: deadline,
+          lookup: (_hostname, options, callback) =>
+            options.all
+              ? callback(null, addresses)
+              : callback(null, addresses[0].address, addresses[0].family),
+          headers: {
+            'User-Agent': 'Mozilla/5.0 JARVIS-Research/1.0',
+            Accept: accept,
+          },
+        },
+        (incoming) =>
+          resolve({
+            status: incoming.statusCode,
+            ok: incoming.statusCode >= 200 && incoming.statusCode < 300,
+            headers: { get: (name) => incoming.headers[name] },
+            body: incoming,
+          }),
+      );
+      request.on('error', (error) => reject(deadline.aborted ? deadline.reason : error));
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       if (!response.headers.get('location')) throw Error('Incomplete page redirect.');
       url = new URL(response.headers.get('location'), url);
-      await response.body?.cancel();
+      response.body.destroy();
       continue;
     }
     if (!response.ok) throw Error(`Research page returned HTTP ${response.status}.`);
     const contentType = response.headers.get('content-type') || '';
-    if (!/text|html|xml|json/.test(contentType)) {
-      await response.body?.cancel();
+    if (
+      binary
+        ? !/^image\/(?:png|jpeg|webp|gif|avif)(?:;|$)/i.test(contentType)
+        : !/text|html|xml|json/.test(contentType)
+    ) {
+      response.body.destroy();
       throw Error('This page is not readable web text.');
     }
     let bytes = 0;
@@ -57,18 +84,29 @@ async function webGet(
     for await (const chunk of response.body) {
       bytes += chunk.length;
       if (bytes > 2000000) {
-        await response.body.cancel().catch(() => {});
+        response.body.destroy();
         throw Error('Page exceeds the text extraction limit.');
       }
       chunks.push(chunk);
     }
-    return { url: url.href, html: Buffer.concat(chunks).toString('utf8') };
+    const data = Buffer.concat(chunks);
+    return binary
+      ? { url: url.href, data, mime: contentType.split(';')[0] }
+      : { url: url.href, html: data.toString('utf8') };
   }
   throw Error('Too many page redirects.');
 }
 function extract(html, url) {
   const $ = cheerio.load(html);
   const title = $('title').first().text().trim();
+  const images = [];
+  $('meta[property="og:image"],meta[name="twitter:image"]').each((_, node) => {
+    try {
+      const target = new URL($(node).attr('content'), url);
+      if (target.protocol === 'https:' && !images.some((i) => i.url === target.href))
+        images.push({ url: target.href, title, sourceUrl: url });
+    } catch {}
+  });
   const publishedAt =
     $('meta[property="article:published_time"],meta[name="date"],meta[itemprop="datePublished"]')
       .first()
@@ -78,7 +116,15 @@ function extract(html, url) {
   $('script,style,noscript,iframe,form,nav,footer,header,aside,svg,[hidden]').remove();
   const main = $('article,main,[role=main]').first();
   const text = (main.length ? main : $('body')).text().replace(/\s+/g, ' ').trim().slice(0, 12000);
-  return { url, title, text, publishedAt, untrusted: true, fetchedAt: Date.now() };
+  return {
+    url,
+    title,
+    text,
+    publishedAt,
+    images: images.slice(0, 3),
+    untrusted: true,
+    fetchedAt: Date.now(),
+  };
 }
 function publicCount(value) {
   if (!/^\d+$/.test(String(value ?? ''))) return null;
@@ -101,6 +147,8 @@ function watchMetadata(html) {
 class ResearchAgent {
   constructor({ get = webGet } = {}) {
     this.results = new Map();
+    this.images = new Map();
+    this.imageCache = new Map();
     this.get = get;
   }
   async research(query, signal, topic = 'general') {
@@ -250,7 +298,7 @@ class ResearchAgent {
       const title =
         data.title ||
         (watch.status === 'fulfilled' ? extract(watch.value.html, canonical).title : '');
-      return {
+      return this.registerImages({
         success: Boolean(title),
         verified: Boolean(title),
         url: canonical,
@@ -258,9 +306,12 @@ class ResearchAgent {
         text: `${title}${data.author_name ? ' — by ' + data.author_name : ''}. Public video metadata only, not a transcript. ${statistics.viewCount === null ? 'The public view count could not be verified; do not invent one.' : 'Public view-count snapshot: ' + statistics.viewCount + '.'}`,
         ...(statistics.publishedAt ? { publishedAt: statistics.publishedAt } : {}),
         video: { id, title, author: data.author_name, authorUrl: data.author_url, ...statistics },
+        images: data.thumbnail_url
+          ? [{ url: data.thumbnail_url, title, sourceUrl: canonical }]
+          : [],
         fetchedAt: Date.now(),
         untrusted: true,
-      };
+      });
     }
     const page = await this.get(url, signal);
     const output = { success: true, verified: true, ...extract(page.html, page.url) };
@@ -304,7 +355,44 @@ class ResearchAgent {
         }
       }
     }
-    return output;
+    return this.registerImages(output);
+  }
+  registerImages(page) {
+    page.images = (page.images || []).map((item) => {
+      const existing = [...this.images.values()].find(
+        (i) => i.url === item.url && i.sourceUrl === item.sourceUrl,
+      );
+      const image = {
+        ...item,
+        id: existing?.id || require('node:crypto').randomUUID(),
+        registeredAt: Date.now(),
+      };
+      this.images.set(image.id, image);
+      return image;
+    });
+    while (this.images.size > 60) this.images.delete(this.images.keys().next().value);
+    return page;
+  }
+  async image(id, signal) {
+    const item = this.images.get(id);
+    if (!item || Date.now() - item.registeredAt > 1800000)
+      throw Error('Image source expired. Research again.');
+    const cached = this.imageCache.get(id);
+    if (cached) return cached;
+    const response = await webGet(
+      item.url,
+      signal,
+      'image/png,image/jpeg,image/webp,image/gif,image/avif',
+      true,
+    );
+    const result = {
+      dataUrl: 'data:' + response.mime + ';base64,' + response.data.toString('base64'),
+      sourceUrl: item.sourceUrl,
+      title: item.title,
+    };
+    this.imageCache.set(id, result);
+    while (this.imageCache.size > 12) this.imageCache.delete(this.imageCache.keys().next().value);
+    return result;
   }
   selected(id) {
     const item = this.results.get(id);

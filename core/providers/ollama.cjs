@@ -17,6 +17,7 @@ class OllamaProvider extends AIProvider {
       'STRUCTURED_OUTPUT',
       ...(caps.includes('tools') ? ['TOOLS'] : []),
       ...(caps.includes('vision') ? ['VISION'] : []),
+      ...(caps.includes('thinking') ? ['REASONING'] : []),
     ];
   }
   async chat(messages, tools, vision, signal, onDelta, options = {}) {

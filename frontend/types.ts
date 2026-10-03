@@ -3,6 +3,7 @@ export type Config = {
   mock: boolean;
   weatherLocation: string;
   provider: ProviderID;
+  visionProvider: ProviderID | 'auto';
   fallbackProvider: ProviderID | 'none';
   cloudEnabled: boolean;
   preferLocalSimple: boolean;
@@ -14,6 +15,8 @@ export type Config = {
   openaiModel: string;
   openaiVisionModel: string;
   anthropicModel: string;
+  geminiModel: string;
+  geminiVisionModel: string;
   providerCapabilities: Record<string, string[]>;
   agentMaxSteps: number;
   agentRetries: number;
@@ -34,6 +37,7 @@ export type Config = {
   tray: boolean;
   minimized: boolean;
   animations: 'full' | 'reduced' | 'off';
+  animationIntensity: 'low' | 'normal' | 'high';
   microphone: boolean;
   microphoneId: string;
   wakeWord: string;
@@ -96,7 +100,7 @@ export type Stats = {
   processes: { name: string; pid: number; ram: number; cpu: number }[];
   time: number;
 };
-export type ProviderID = 'ollama' | 'openai' | 'anthropic';
+export type ProviderID = 'ollama' | 'openai' | 'anthropic' | 'gemini';
 export type MCPServer = {
   id: string;
   name: string;
@@ -140,6 +144,47 @@ export type Step = {
   status: string;
   result?: unknown;
   error?: string;
+};
+export type BriefingPanel = {
+  narration?: string;
+  type:
+    | 'text'
+    | 'metrics'
+    | 'line'
+    | 'area'
+    | 'bar'
+    | 'radial'
+    | 'timeline'
+    | 'images'
+    | 'comparison'
+    | 'news'
+    | 'sources'
+    | 'video'
+    | 'map';
+  title: string;
+  body?: string;
+  sourceIds: string[];
+  items?: { label: string; value: string; detail?: string }[];
+  data?: { label: string; value: number }[];
+  unit?: string;
+  imageIds?: string[];
+};
+export type Briefing = {
+  id: string;
+  title: string;
+  subtitle: string;
+  created: number;
+  modelOrganized: boolean;
+  scenes: { title: string; narration: string; panels: BriefingPanel[] }[];
+  sources: {
+    id: string;
+    title: string;
+    url: string;
+    publishedAt?: string;
+    fetchedAt?: number;
+    readable: boolean;
+    images: { id: string; title: string; sourceUrl: string }[];
+  }[];
 };
 export type Task = {
   id: string;
@@ -213,16 +258,21 @@ export type JarvisAPI = {
       screenContext?: ScreenState;
       aiUsage?: AIUsage;
       plugins?: Plugin[];
+      briefing?: Briefing;
     }>
   >;
   command: (text: string, turn?: string) => Promise<Result<void>>;
+  researchImage: (
+    id: string,
+  ) => Promise<Result<{ dataUrl: string; title: string; sourceUrl: string }>>;
+  openResearchSource: (id: string) => Promise<Result<void>>;
   interrupt: () => Promise<Result<{ taskContinues: boolean }>>;
   cancelTask: () => Promise<Result<void>>;
-  previewSpeech: (text: string, turn: string) => Promise<Result<{ started: boolean }>>;
   confirm: (id: string, yes: boolean) => Promise<Result<void>>;
   cancel: () => Promise<Result<void>>;
   settings: (c: Config) => Promise<Result<Config>>;
   models: () => Promise<Result<{ online: boolean; models: string[] }>>;
+  providerCapabilities: (id: ProviderID, model: string) => Promise<Result<string[]>>;
   providerModels: (provider: ProviderID) => Promise<Result<{ online: boolean; models: string[] }>>;
   credentials: () => Promise<Result<Record<string, boolean>>>;
   setCredential: (name: string, value: string) => Promise<Result<Record<string, boolean>>>;

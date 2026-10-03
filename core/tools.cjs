@@ -8,6 +8,19 @@ const system = require('./windows-system.cjs');
 const text = z.string().min(1).max(8000),
   coord = z.number().int().min(-20000).max(20000);
 const definitions = {
+  present_briefing: {
+    risk: 0,
+    schema: require('./briefing.cjs').briefingSchema,
+    description:
+      'Present a structured visual briefing INSIDE JARVIS after research. Use briefingSources IDs from actual tool observations. Organize unfamiliar topics into concise narrated scenes with text, metrics, charts, images, comparisons, timelines and sources. No arbitrary code or invented chart values. imageIds must be returned by the cited sources. One to eight scenes, at most four panels per scene. Prefer two to four concise scenes initially; panel bodies under 200 characters and scene narration under 250 characters reduce generation latency. Optional per-panel narration highlights that panel during playback. Use this for detailed research, explanations and visual comparisons, then give a short final answer.',
+  },
+  find_images: {
+    risk: 0,
+    permission: 'browser',
+    schema: z.object({ query: z.string().trim().min(1).max(500) }).strict(),
+    description:
+      'Find attributed public images in background research source metadata. Returns registered image IDs, titles and source URLs for present_briefing; no browser navigation. Images may be unavailable or copyrighted; preserve attribution.',
+  },
   enable_tools: {
     risk: 0,
     schema: z
@@ -796,6 +809,8 @@ class Executor {
         'capture_screen',
         'read_visible_text',
         'web_search',
+        'present_briefing',
+        'find_images',
         'get_weather',
         'find_video',
         'extract_page_text',
@@ -825,6 +840,10 @@ class Executor {
         return this.host.browser.control(p.action, p.index, signal);
       case 'web_search':
         return this.host.research.research(p.query, signal, p.topic);
+      case 'find_images':
+        return this.host.research.research(p.query + ' images', signal);
+      case 'present_briefing':
+        return this.host.briefing.present(p);
       case 'get_weather':
         return require('./weather.cjs').weather(p.location || c.weatherLocation, p.days, signal);
       case 'find_video':

@@ -49,6 +49,8 @@ const categories = {
     'create_folder',
   ],
   research: [
+    'present_briefing',
+    'find_images',
     'web_search',
     'get_weather',
     'find_video',

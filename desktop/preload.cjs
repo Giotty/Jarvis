@@ -1,15 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const methods = [
   'snapshot',
+  'researchImage',
+  'openResearchSource',
   'command',
   'confirm',
   'cancel',
   'cancelTask',
   'interrupt',
-  'previewSpeech',
   'settings',
   'models',
   'providerModels',
+  'providerCapabilities',
   'credentials',
   'setCredential',
   'plugins',

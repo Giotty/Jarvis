@@ -23,7 +23,8 @@ function input(messages) {
           type: 'image',
           source: {
             type: 'base64',
-            media_type: 'image/jpeg',
+            media_type:
+              /^data:(image\/(?:jpeg|png|webp|gif));base64,/.exec(image)?.[1] || 'image/jpeg',
             data: image.replace(/^data:image\/[^;]+;base64,/, ''),
           },
         });
@@ -152,4 +153,4 @@ class ClaudeProvider extends AIProvider {
     return normalize(result);
   }
 }
-module.exports = { ClaudeProvider, input, normalize };
+module.exports = { ClaudeProvider, AnthropicProvider: ClaudeProvider, input, normalize };

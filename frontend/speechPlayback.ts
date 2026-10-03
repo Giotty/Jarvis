@@ -4,6 +4,7 @@ type Options = {
   play: (audio: string) => Playback;
   state: (speaking: boolean) => void;
   error: (error: unknown) => void;
+  complete?: () => void;
 };
 // One current chunk and one look-ahead chunk. No whole-reply synthesis wait,
 // and an interruption cannot play audio from an older generation.
@@ -14,10 +15,12 @@ export class SpeechPlayback {
   private pending = '';
   private next: { generation: number; result: Promise<string> } | null = null;
   private playback: Playback | null = null;
+  private ended = false;
   speaking = false;
   constructor(private options: Options) {}
   stop() {
     this.generation++;
+    this.ended = false;
     this.queue = [];
     this.pending = '';
     this.next = null;
@@ -35,6 +38,7 @@ export class SpeechPlayback {
     this.flush(false);
   }
   finish() {
+    this.ended = true;
     this.flush(true);
   }
   speak(text: string) {
@@ -69,6 +73,7 @@ export class SpeechPlayback {
     const token = this.generation;
     if (this.pumpToken === token) return;
     this.pumpToken = token;
+    let failed = false;
     try {
       while (token === this.generation) {
         this.prepare();
@@ -87,12 +92,17 @@ export class SpeechPlayback {
         this.playback = null;
       }
     } catch (error) {
+      failed = true;
       if (token === this.generation) this.options.error(error);
     } finally {
       if (token === this.generation) {
         this.pumpToken = null;
         this.speaking = false;
         this.options.state(false);
+        if (!failed && this.ended && !this.queue.length && !this.pending.trim()) {
+          this.ended = false;
+          this.options.complete?.();
+        }
       }
     }
   }

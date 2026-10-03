@@ -1,3 +1,4 @@
+// Historical regression fixture only. Never loaded or packaged by JARVIS.
 function screenRequest(text) {
   if (/\b(?:don't|do not|never)\b.*\b(?:click|select|choose|press|tap|open)\b/i.test(text))
     return null;

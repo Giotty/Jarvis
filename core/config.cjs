@@ -4,8 +4,9 @@ const schema = z
     setupComplete: z.boolean().default(false),
     mock: z.boolean().default(false),
     weatherLocation: z.string().trim().max(200).default(''),
-    provider: z.enum(['ollama', 'openai', 'anthropic']).default('ollama'),
-    fallbackProvider: z.enum(['none', 'ollama', 'openai', 'anthropic']).default('ollama'),
+    provider: z.enum(['ollama', 'openai', 'anthropic', 'gemini']).default('ollama'),
+    fallbackProvider: z.enum(['none', 'ollama', 'openai', 'anthropic', 'gemini']).default('ollama'),
+    visionProvider: z.enum(['auto', 'ollama', 'openai', 'anthropic', 'gemini']).default('auto'),
     cloudEnabled: z.boolean().default(false),
     preferLocalSimple: z.boolean().default(false),
     cloudVision: z.enum(['disabled', 'manual', 'when-needed']).default('disabled'),
@@ -20,8 +21,12 @@ const schema = z
     openaiModel: z.string().max(200).default(''),
     openaiVisionModel: z.string().max(200).default(''),
     anthropicModel: z.string().max(200).default(''),
+    geminiModel: z.string().max(200).default(''),
+    geminiVisionModel: z.string().max(200).default(''),
     providerCapabilities: z
-      .record(z.array(z.enum(['TEXT', 'VISION', 'TOOLS', 'STRUCTURED_OUTPUT', 'STREAMING'])))
+      .record(
+        z.array(z.enum(['TEXT', 'VISION', 'TOOLS', 'STRUCTURED_OUTPUT', 'STREAMING', 'REASONING'])),
+      )
       .default({}),
     agentMaxSteps: z.number().int().min(1).max(64).default(24),
     agentRetries: z.number().int().min(0).max(3).default(2),
@@ -102,6 +107,7 @@ const schema = z
     tray: z.boolean().default(true),
     minimized: z.boolean().default(false),
     animations: z.enum(['full', 'reduced', 'off']).default('full'),
+    animationIntensity: z.enum(['low', 'normal', 'high']).default('normal'),
     microphone: z.boolean().default(false),
     microphoneId: z.string().default(''),
     wakeWord: z.string().min(1).max(40).default('Jarvis'),

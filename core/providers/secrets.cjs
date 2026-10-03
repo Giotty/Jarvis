@@ -24,7 +24,7 @@ class SecretStore {
     return Object.fromEntries(Object.keys(this.read()).map((name) => [name, true]));
   }
   set(name, value) {
-    if (!/^(?:openai|anthropic|mcp:[a-z][a-z0-9_-]{0,39})$/.test(name))
+    if (!/^(?:openai|anthropic|gemini|mcp:[a-z][a-z0-9_-]{0,39})$/.test(name))
       throw Error('Unknown credential');
     if (typeof value !== 'string' || value.length > 8000) throw Error('Invalid credential');
     const data = this.read();

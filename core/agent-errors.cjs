@@ -1,5 +1,7 @@
 function publicError(error) {
   const message = String(error?.message || error || '');
+  if (error?.name === 'TimeoutError' || /timed out|timeout|too long/i.test(message))
+    return 'That took too long. The local model or service may be busy; you can try again or choose another provider.';
   if (/repeated action failures/i.test(message))
     return 'I couldn’t complete that reliably. I stopped after three unsuccessful attempts; bring the target window forward or give me a clearer target.';
   if (/AI provider|missing_key|missing_model/i.test(message))

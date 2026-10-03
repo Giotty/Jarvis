@@ -1,9 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { targetWindow } = require('../core/window-target.cjs');
-const { directIntent, earlyIntent } = require('../core/intents.cjs');
+const { directIntent, earlyIntent } = require('./legacy/intents.cjs');
 const { validate } = require('../core/tools.cjs');
-const { Planner } = require('../core/planner.cjs');
+const { Planner } = require('./legacy/planner.cjs');
 const { Safety } = require('../core/safety.cjs');
 const fs = require('node:fs');
 const ts = require('typescript');
@@ -136,7 +136,7 @@ test('capture ignores silence, emits a turn after a brief pause, then detects in
   for (let i = 0; i < 6; i++) onsets += Number(capture.push(speech, true).onset);
   assert.equal(onsets, 2);
   for (let i = 0; i < 80; i++) previews += Number(!!capture.push(speech, true).preview);
-  assert.equal(previews, 1); // Long spoken requests can still start navigation early.
+  assert.equal(previews, 0); // Long turns also use one complete utterance and the general agent.
 });
 
 test('speech buffers encode real mono PCM WAV with the actual capture rate', () => {

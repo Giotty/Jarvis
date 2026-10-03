@@ -1,5 +1,6 @@
+// Historical regression fixture only. Never loaded or packaged by JARVIS.
 const crypto = require('node:crypto');
-const { validate, toolSchemas } = require('./tools.cjs');
+const { validate, toolSchemas } = require('../../core/tools.cjs');
 const {
   fastIntent,
   cleanTranscript,
@@ -8,11 +9,11 @@ const {
   namedWindow,
 } = require('./agent-intake.cjs');
 const { TaskContext } = require('./task-context.cjs');
-const { publicError, failure, result } = require('./agent-errors.cjs');
+const { publicError, failure, result } = require('../../core/agent-errors.cjs');
 const MAX_STEPS = 24,
   MAX_REPAIRS = 2;
-const { toolNames } = require('./agent-capabilities.cjs');
-const { ordinal } = require('./ordinal-controls.cjs');
+const { toolNames } = require('../../core/agent-capabilities.cjs');
+const { ordinal } = require('../../core/ordinal-controls.cjs');
 function planningObservation(context) {
   const controls = context.elements || [];
   const edits = controls.filter((e) => ['EditControl', 'ComboBoxControl'].includes(e.kind));

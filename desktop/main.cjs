@@ -34,6 +34,7 @@ const { ScreenTargets } = require('../core/screen-targets.cjs');
 const { ScreenContext } = require('../core/screen-context.cjs');
 const { BrowserAgent } = require('../core/browser-agent.cjs');
 const { ResearchAgent } = require('../core/research-agent.cjs');
+const { BriefingEngine } = require('../core/briefing.cjs');
 const { publicError } = require('../core/agent-errors.cjs');
 const { readConfiguration, writeConfiguration } = require('../core/configuration.cjs');
 const { ordinaryNavigation } = require('../core/navigation-safety.cjs');
@@ -72,7 +73,7 @@ let win,
   config,
   store,
   audit,
-  planner,
+  agent,
   vision,
   ollama,
   ai,
@@ -82,6 +83,7 @@ let win,
   timer,
   screenContext,
   browserForDiagnostics,
+  briefing,
   lastStats = {},
   state = 'IDLE',
   statsBusy = false;
@@ -118,7 +120,9 @@ function loadConfig() {
   return dir;
 }
 function saveConfig(next) {
-  if (planner?.busy) planner.cancel();
+  const validated = schema.parse(next);
+  next = validated;
+  if (agent?.busy) agent.cancel();
   const changedSpeech =
     config &&
     ['pythonPath', 'sttModelPath', 'sttModel', 'sttLanguage', 'sttDevice'].some(
@@ -134,7 +138,7 @@ function saveConfig(next) {
       'kokoroVoice',
       'piperVoicePath',
     ].some((k) => config[k] !== next[k]);
-  config = schema.parse(next);
+  config = validated;
   if (changedSpeech || !config.microphone) speech?.stop();
   if (changedVoice || !config.tts) speaker?.stop();
   writeConfiguration(configFile, config);
@@ -162,7 +166,7 @@ function saveConfig(next) {
   return config;
 }
 function emergencyStop() {
-  planner?.cancel();
+  agent?.cancel();
   speech?.stop();
   speaker?.stop();
   emit('stop', true);
@@ -277,51 +281,59 @@ function handlers() {
     tasks: store.tasks(),
     memories: store.memories(),
     screenContext: screenContext?.snapshot(),
+    briefing: briefing?.last,
   }));
   handle('command', (text, turn) =>
     track(() =>
-      planner.command(
+      agent.command(
         z.string().trim().min(1).max(8000).parse(text),
         turn === undefined ? undefined : z.string().uuid().parse(turn),
       ),
     ),
   );
-  handle('previewSpeech', (text, turn) => {
-    if (!config.microphone || !config.conversationMode) return { started: false };
-    return track(() =>
-      planner.preview(
-        z.string().trim().min(1).max(1000).parse(text),
-        z.string().uuid().parse(turn),
-      ),
-    );
-  });
   handle('interrupt', async () => {
     screenContext?.prioritizeVoice();
-    return planner?.bargeIn() || { taskContinues: false };
+    return agent?.bargeIn() || { taskContinues: false };
   });
   handle('confirm', (id, approved) =>
-    track(() => planner.confirm(z.string().uuid().parse(id), z.boolean().parse(approved))),
+    track(() => agent.confirm(z.string().uuid().parse(id), z.boolean().parse(approved))),
   );
   handle('cancel', () => emergencyStop());
   handle('cancelTask', () => {
-    planner?.cancel();
+    agent?.cancel();
     emit('speech-abort', true);
   });
   handle('settings', (next) => saveConfig(next));
   handle('models', () => ai.models());
-  handle('providerModels', (id) => ai.models(z.enum(['openai', 'anthropic', 'ollama']).parse(id)));
+  handle('providerModels', (id) =>
+    ai.models(z.enum(['openai', 'anthropic', 'gemini', 'ollama']).parse(id)),
+  );
+  handle('providerCapabilities', (id, model) =>
+    ai.capabilities(
+      z.enum(['openai', 'anthropic', 'gemini', 'ollama']).parse(id),
+      z.string().min(1).max(200).parse(model),
+    ),
+  );
+  handle('researchImage', (id) => agent.executor.host.research.image(z.string().uuid().parse(id)));
+  handle('openResearchSource', (id) => {
+    const selected = z.string().max(200).parse(id);
+    const source =
+      briefing.sources.get(selected) || briefing.last?.sources.find((s) => s.id === selected);
+    if (!source) throw Error('Research source expired.');
+    return shell.openExternal(source.url);
+  });
   handle('credentials', () => secrets.status());
   handle('setCredential', (name, value) => {
-    if (planner.busy) throw Error('Cancel the current task before changing credentials.');
+    if (agent.busy) throw Error('Cancel the current task before changing credentials.');
     return secrets.set(z.string().max(100).parse(name), z.string().max(8000).parse(value));
   });
   handle('plugins', () => registry.list());
   handle('connectPlugin', (id) => {
-    if (planner.busy) throw Error('Cancel the current task before connecting a plugin.');
+    if (agent.busy) throw Error('Cancel the current task before connecting a plugin.');
     return registry.connect(z.string().max(40).parse(id));
   });
   handle('disconnectPlugin', async (id) => {
-    planner.cancel();
+    agent.cancel();
     await registry.disconnect(z.string().max(40).parse(id));
     emit('plugins', registry.list());
     return registry.list();
@@ -342,7 +354,7 @@ function handlers() {
         elements: screenContext.state.elements,
       };
     } finally {
-      if (!planner.busy) emit('state', 'IDLE');
+      if (!agent.busy) emit('state', 'IDLE');
     }
   });
   handle('locate', async (label) => {
@@ -389,7 +401,7 @@ function handlers() {
     try {
       return await speech.transcribe(z.string().max(12000000).parse(audio));
     } finally {
-      if (!planner.busy) emit('state', 'IDLE');
+      if (!agent.busy) emit('state', 'IDLE');
     }
   });
   handle('diagnostics', async () => {
@@ -445,6 +457,8 @@ function handlers() {
     if (action === 'minimize') win.minimize();
     else if (action === 'close') win.close();
     else if (action === 'maximize') win.isMaximized() ? win.unmaximize() : win.maximize();
+    else if (action === 'fullscreen') win.setFullScreen(!win.isFullScreen());
+    else if (action === 'exit-fullscreen') win.setFullScreen(false);
     else throw Error('Unknown window action');
   });
 }
@@ -476,6 +490,7 @@ async function init() {
   secrets = new SecretStore(dir, safeStorage);
   ai = new ProviderRouter({ config: () => config, secrets, local: ollama, emit });
   const safety = new Safety();
+  briefing = new BriefingEngine({ emit });
   const visionConfig = () => ({
     ...config,
     vision: config.pluginEnabled.screen === false ? 'off' : config.vision,
@@ -563,10 +578,7 @@ async function init() {
     emit,
     busy: () =>
       Boolean(
-        planner?.busy ||
-        planner?.active?.status === 'waiting' ||
-        speech?.pending ||
-        speaker?.pending,
+        agent?.busy || agent?.active?.status === 'waiting' || speech?.pending || speaker?.pending,
       ),
     stats: () => lastStats,
     games: () => discoveredGames,
@@ -635,7 +647,11 @@ async function init() {
       focusWindow: (window, signal) =>
         withTarget(() => nativeCall('focus_application', { name: window.title }, signal)),
       screenEvent: (kind, text) => screenContext.event(kind, text),
-      beginTask: () => screenContext.invalidateAnalysis(),
+      beginTask: (request) => {
+        screenContext.invalidateAnalysis();
+        briefing.begin(request);
+      },
+      briefing,
       cancelTask: () => screenContext.invalidateAnalysis(),
       gamesDiscovered: (games) => {
         discoveredGames.splice(0, discoveredGames.length, ...games.map((g) => g.name));
@@ -737,7 +753,7 @@ async function init() {
     },
   });
   registry = new PluginRegistry({ config: () => config, executor, store, secrets, emit });
-  planner = new AgentLoop({
+  agent = new AgentLoop({
     ai,
     registry,
     executor,
@@ -754,9 +770,9 @@ async function init() {
   vision = new Vision({ capture, ollama: ai, config: visionConfig });
   win = new BrowserWindow({
     width: 1500,
-    height: 980,
-    minWidth: 1040,
-    minHeight: 720,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 700,
     backgroundColor: '#040b13',
     title: 'JARVIS',
     icon: path.join(__dirname, '../assets/icon.ico'),
@@ -767,7 +783,7 @@ async function init() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
       autoplayPolicy: 'no-user-gesture-required',
     },
   });
@@ -809,7 +825,7 @@ async function init() {
   saveConfig(config);
   void ollama.warm().catch(() => {});
   const sample = async () => {
-    if (statsBusy || planner?.busy || speech?.pending || speaker?.pending) return;
+    if (statsBusy || agent?.busy || speech?.pending || speaker?.pending) return;
     statsBusy = true;
     try {
       lastStats = await telemetry();
@@ -858,7 +874,7 @@ else {
     speaker?.stop();
     clearInterval(timer);
     globalShortcut.unregisterAll();
-    planner?.cancel();
+    agent?.cancel();
     screenContext?.stop();
     void registry?.close();
   });

@@ -364,6 +364,7 @@ test('capability overrides route non-vision models through local captioning', as
 });
 test('partial spoken responses do not concatenate another provider answer', async () => {
   const { providers, calls } = routerProviders();
+  providers.openai.capabilities = async () => ['TEXT', 'STREAMING'];
   providers.openai.chat = async (_m, _t, _v, _s, delta) => {
     delta('partial');
     throw Error('lost stream');

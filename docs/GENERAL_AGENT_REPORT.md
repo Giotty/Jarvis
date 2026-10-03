@@ -1,5 +1,7 @@
 # General agent update
 
+> Historical 0.2.x report. Current UI, providers and launch instructions are in [the 0.3.0 rebuild report](REBUILD_REPORT.md).
+
 0.2.3 follow-up: background research reads public sources, weather uses a direct Open-Meteo tool, and YouTube pages use public metadata and publication-dated channel feeds. Current-information answers without research and unsupported file-access denials receive one bounded correction. Computer-wide filename search has resumable pages across accessible local drives, including hidden/deep directories. File metadata follows the same cloud privacy policy as file contents. Current built-ins expose 64 tools. Read-only manual screen inspection no longer requires a foreground focus change; input actions retain their focus/target checks. See the latest verification section for live checks and limitations.
 
 Only Giotty/Jarvis was modified. Existing HUD, local speech, screen capture, automation, telemetry, memory and installer were retained. Cloud processing remains disabled and no paid requests were made.

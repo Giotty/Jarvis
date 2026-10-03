@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { directIntent } = require('../core/intents.cjs');
+const { directIntent } = require('./legacy/intents.cjs');
 const { searchUrl, chooseGame } = require('../core/web-actions.cjs');
-const { Planner } = require('../core/planner.cjs');
+const { Planner } = require('./legacy/planner.cjs');
 const { Safety } = require('../core/safety.cjs');
 const { validate, Executor } = require('../core/tools.cjs');
 const { Ollama } = require('../core/ollama.cjs');

@@ -20,15 +20,25 @@ class AIProvider {
     return { online: false, models: [] };
   }
   async capabilities(model) {
-    return (
-      this.config().providerCapabilities?.[this.id + ':' + model] || [
-        'TEXT',
-        'TOOLS',
-        'VISION',
-        'STREAMING',
-        'STRUCTURED_OUTPUT',
-      ]
-    );
+    return this.config().providerCapabilities?.[this.id + ':' + model] || ['TEXT', 'STREAMING'];
+  }
+  toolCalling(messages, tools, signal, onDelta) {
+    return this.chat(messages, tools, false, signal, onDelta);
+  }
+  vision(messages, signal, onDelta) {
+    return this.chat(messages, undefined, true, signal, onDelta);
+  }
+  structuredOutput(messages, schema, signal) {
+    return this.chat(messages, undefined, false, signal, undefined, { schema });
+  }
+  reasoning(messages, signal, onDelta) {
+    return this.chat(messages, undefined, false, signal, onDelta, { reasoning: true });
+  }
+  usage(reply) {
+    return reply.usage || { input: 0, output: 0 };
+  }
+  cancel(controller) {
+    controller.abort();
   }
   async request(url, body, headers, signal) {
     signal?.throwIfAborted();

@@ -15,9 +15,6 @@ class AgentLoop {
     this.store.task(this.active);
     this.emit('task', this.active);
   }
-  async preview() {
-    return { started: false };
-  }
   async command(input) {
     let text = input.trim();
     const wake = this.config().wakeWord || 'Jarvis';
@@ -43,7 +40,7 @@ class AgentLoop {
     this.backgroundOnly = false;
     this.controller = new AbortController();
     this.safety.resume();
-    this.executor.host?.beginTask?.();
+    this.executor.host?.beginTask?.(text);
     const deadline = setTimeout(
       () => this.controller.abort(Error('Task timed out')),
       this.config().agentTaskTimeout || 180000,
@@ -121,6 +118,7 @@ class AgentLoop {
             // Tool continuations then use the configured primary brain; no phrase classification.
             simple: this.active.steps.length === 0,
             localOnly: this.privateTask,
+            outputTokens: schema.some((s) => s.function.name === 'present_briefing') ? 2048 : 1024,
           },
         );
       let reply;
@@ -249,6 +247,13 @@ class AgentLoop {
       for (const step of batch) {
         const outcome = step.result || failure(Error('Step unavailable'));
         const { _image, ...safe } = outcome;
+        const sources = this.executor.host?.briefing?.observe({ ...step, result: safe });
+        if (sources?.length) {
+          safe.briefingSources = sources;
+          this.loadedPlugins.add('research');
+          safe.presentationHint =
+            'Research evidence is available. For a requested visual briefing, call present_briefing now with concise scenes, short narration, and these exact source IDs. Fetch more only for facts still missing, not to repeat existing coverage.';
+        }
         step.result = safe;
         this.context.record(step);
         this.messages.push({

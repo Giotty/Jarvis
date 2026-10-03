@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Planner } = require('../core/planner.cjs');
+const { Planner } = require('./legacy/planner.cjs');
 const { BrowserAgent } = require('../core/browser-agent.cjs');
-const { fastIntent } = require('../core/agent-intake.cjs');
+const { fastIntent } = require('./legacy/agent-intake.cjs');
 const { publicError } = require('../core/agent-errors.cjs');
 const { validate } = require('../core/tools.cjs');
 const { ScreenContext } = require('../core/screen-context.cjs');

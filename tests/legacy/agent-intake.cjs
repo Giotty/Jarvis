@@ -1,4 +1,5 @@
-const { cleanTranscript, rankNames } = require('./app-matching.cjs');
+// Historical regression fixture only. Never loaded or packaged by JARVIS.
+const { cleanTranscript, rankNames } = require('../../core/app-matching.cjs');
 function screenRelated(text) {
   return /\b(?:screen|window|visible|button|profile|error|this|that|it|there|first|second|right|left|looking at|game|boss|menu|stuck|not working|where.*click|go back|scroll|fill|type|textbox|search box)\b/i.test(
     text,
@@ -35,7 +36,7 @@ async function fastIntent(input, config, apps, context) {
     return { tool: 'open_url', args: { url: aliases[ranked[0].name] } };
   const all = await apps.all();
   const name = config.appAliases?.[query.toLowerCase()] || query;
-  const { chooseApp } = require('./windows-system.cjs');
+  const { chooseApp } = require('../../core/windows-system.cjs');
   const selected = chooseApp(name, all, JSON.stringify(context)).selected;
   if (selected) return { tool: 'open_application', args: { name: selected.Name } };
   return null;
