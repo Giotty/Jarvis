@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const crypto = require('node:crypto');
+const { segmentSchema } = require('./workspace.cjs');
 const sourceId = z.string().min(1).max(200);
 const panel = z
   .object({
@@ -46,12 +47,14 @@ const briefingSchema = z
   .object({
     title: z.string().min(1).max(120),
     subtitle: z.string().max(180).default(''),
+    mode: z.enum(['replace', 'append']).default('replace'),
     scenes: z
       .array(
         z
           .object({
             title: z.string().min(1).max(90),
             narration: z.string().max(900).default(''),
+            segments: z.array(segmentSchema).max(16).default([]),
             panels: z.array(panel).min(1).max(4),
           })
           .strict(),
@@ -70,14 +73,29 @@ function numbers(value, found = new Set()) {
   return found;
 }
 class BriefingEngine {
-  constructor({ emit = () => {} } = {}) {
+  constructor({ emit = () => {}, workspace } = {}) {
     this.emit = emit;
+    this.workspace = workspace;
     this.sources = new Map();
     this.last = null;
   }
   begin(request) {
     this.request = request;
-    this.sources.clear();
+    if (!this.workspace?.current) this.sources.clear();
+    else
+      for (const source of this.workspace.current.sources) {
+        if (!this.sources.has(source.id))
+          this.sources.set(source.id, {
+            ...source,
+            text: this.workspace.current.modules
+              .flatMap((m) => m.panels.filter((p) => p.sourceIds.includes(source.id)))
+              .map((p) => JSON.stringify({ body: p.body, items: p.items, data: p.data }))
+              .join(' ')
+              .slice(0, 12000),
+          });
+      }
+    // Prior source observations remain available for intentional follow-up modules.
+    this.workspace?.startTask();
   }
   observe(step) {
     if (
@@ -106,7 +124,12 @@ class BriefingEngine {
     for (const observation of observations.slice(0, 8)) {
       if (!observation.url || !/^https?:\/\//.test(observation.url)) continue;
       const existing = [...this.sources.values()].find((s) => s.url === observation.url);
-      if (!existing && this.sources.size >= 40) continue;
+      if (!existing && this.sources.size >= 80) {
+        const retained = new Set(this.workspace?.current?.sources.map((s) => s.id) || []);
+        const oldest = [...this.sources.keys()].find((k) => !retained.has(k));
+        if (oldest) this.sources.delete(oldest);
+        else continue;
+      }
       const id = existing?.id || observation.id || crypto.randomUUID();
       const source = { ...observation, id, title: observation.title || observation.url };
       try {
@@ -233,6 +256,18 @@ class BriefingEngine {
             );
         }
       }
+    if (checked)
+      for (const scene of input.scenes)
+        for (const s of scene.segments || []) {
+          const p = scene.panels[s.panel];
+          if (
+            !p ||
+            s.item >= p.items.length ||
+            s.datum >= p.data.length ||
+            (s.imageId && !p.imageIds.includes(s.imageId))
+          )
+            throw Error('Narration focus must reference real panel content.');
+        }
     const sources = [...this.sources.values()].map((s) => ({
       id: s.id,
       title: s.title,
@@ -243,20 +278,23 @@ class BriefingEngine {
         s.readable === true || (s.readable !== false && !!(s.text || s.videos || s.current)),
       images: s.images || [],
     }));
-    this.last = {
+    const next = {
       ...input,
       id: crypto.randomUUID(),
       created: Date.now(),
       sources,
       modelOrganized: checked,
     };
+    const workspaceResult = checked ? this.workspace?.receive(next, input.mode) : null;
+    this.last = next;
     this.emit('briefing', this.last);
     return {
       success: true,
       verified: true,
       sceneCount: input.scenes.length,
+      ...(workspaceResult ? { modules: workspaceResult.modules } : {}),
       message:
-        'Visual briefing displayed inside JARVIS. Use a concise final answer; the user can narrate the scenes.',
+        'Visual briefing displayed inside JARVIS. Use a concise final answer; narration progresses automatically in the workspace.',
     };
   }
 }

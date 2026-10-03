@@ -358,20 +358,41 @@ class ResearchAgent {
     return this.registerImages(output);
   }
   registerImages(page) {
-    page.images = (page.images || []).map((item) => {
-      const existing = [...this.images.values()].find(
-        (i) => i.url === item.url && i.sourceUrl === item.sourceUrl,
-      );
-      const image = {
-        ...item,
-        id: existing?.id || require('node:crypto').randomUUID(),
-        registeredAt: Date.now(),
-      };
-      this.images.set(image.id, image);
-      return image;
-    });
+    const seen = new Set();
+    page.images = (page.images || [])
+      .filter((item) => {
+        if (
+          !item.url ||
+          seen.has(item.url) ||
+          /watermark|\/favicon|\/sprite|\/pixel\b/i.test(item.url) ||
+          (item.width && item.width < 200) ||
+          (item.height && item.height < 150)
+        )
+          return false;
+        seen.add(item.url);
+        return true;
+      })
+      .slice(0, 3)
+      .map((item) => {
+        const existing = [...this.images.values()].find(
+          (i) => i.url === item.url && i.sourceUrl === item.sourceUrl,
+        );
+        const image = {
+          ...item,
+          id: existing?.id || require('node:crypto').randomUUID(),
+          registeredAt: Date.now(),
+        };
+        this.images.set(image.id, image);
+        return image;
+      });
     while (this.images.size > 60) this.images.delete(this.images.keys().next().value);
     return page;
+  }
+  restoreImages(sources) {
+    for (const source of sources)
+      for (const image of source.images || [])
+        this.images.set(image.id, { ...image, registeredAt: Date.now() });
+    while (this.images.size > 60) this.images.delete(this.images.keys().next().value);
   }
   async image(id, signal) {
     const item = this.images.get(id);

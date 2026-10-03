@@ -127,7 +127,9 @@ test('sentence playback starts before a full reply and cannot replay pre-interru
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const module = { exports: {} };
-  new Function('exports', 'module', code)(module.exports, module);
+  new Function('exports', 'module', 'require', code)(module.exports, module, () =>
+    require('../core/speech-text.mjs'),
+  );
   const played = [],
     synthesis = [];
   let finish;

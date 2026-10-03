@@ -344,7 +344,9 @@ test('Narration completes only after final actual playback, never after interrup
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
   ).outputText;
   const mod = { exports: {} };
-  new Function('exports', 'module', code)(mod.exports, mod);
+  new Function('exports', 'module', 'require', code)(mod.exports, mod, () =>
+    require('../core/speech-text.mjs'),
+  );
   let finish,
     complete = 0;
   const tick = () => new Promise((r) => setImmediate(r));

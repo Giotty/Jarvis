@@ -86,6 +86,7 @@ const schema = z
                 'system',
                 'memory',
                 'toolkit',
+                'workspace',
               ].includes(s.id),
           ),
         'Use unique external plugin IDs, distinct from built-ins',

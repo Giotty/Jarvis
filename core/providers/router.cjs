@@ -88,10 +88,9 @@ class ProviderRouter {
     const c = this.config();
     const privateTask = messages.some(
       (m) =>
-        m.role === 'tool' &&
-        ((m._privacy === 'files' && !c.cloudFiles) ||
-          (m._privacy === 'clipboard' && !c.cloudClipboard) ||
-          (m._privacy === 'external' && (!c.cloudFiles || !c.cloudClipboard))),
+        (m._privacy === 'files' && !c.cloudFiles) ||
+        (m._privacy === 'clipboard' && !c.cloudClipboard) ||
+        (m._privacy === 'external' && (!c.cloudFiles || !c.cloudClipboard)),
     );
     let primary = c.cloudEnabled && !options.localOnly ? c.provider : 'ollama';
     if (privateTask) primary = 'ollama';

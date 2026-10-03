@@ -53,6 +53,29 @@ export const Reactor = memo(function Reactor({ state, level }: { state: string; 
             />
           ))}
         </g>
+        <g className="engineered-detail">
+          {Array.from({ length: 24 }, (_, i) => (
+            <path
+              key={i}
+              d="M274 105H326L322 115H278ZM283 120V129H317V120"
+              transform={'rotate(' + i * 15 + ' 300 300)'}
+            />
+          ))}
+        </g>
+        <g className="engineered-label">
+          {[
+            'CORE SYNC',
+            'PERCEPTION',
+            'HOST CONTROL',
+            'NEURAL LINK',
+            'ENERGY BUS',
+            'LOCAL SYSTEM',
+          ].map((label, i) => (
+            <text key={label} x="270" y="56" transform={'rotate(' + i * 60 + ' 300 300)'}>
+              {label}
+            </text>
+          ))}
+        </g>
         <circle cx="300" cy="300" r="198" className="faint" />
         <circle cx="300" cy="300" r="188" className="faint" />
         <path
@@ -84,7 +107,12 @@ export const Reactor = memo(function Reactor({ state, level }: { state: string; 
         <circle cx="300" cy="300" r="171" pathLength="100" strokeDasharray="24 9 8 4 18 11 16 10" />
         <circle cx="300" cy="300" r="154" pathLength="100" strokeDasharray=".2 1.5" />
       </svg>
-      <svg className="energy-form" viewBox="0 0 600 600" aria-hidden="true">
+      <svg
+        className="energy-form"
+        style={{ transform: 'rotate(180deg)' }}
+        viewBox="0 0 600 600"
+        aria-hidden="true"
+      >
         <path className="energy-outline" d="M300 179L425 395H175Z" />
         <path
           className="energy-triangle"

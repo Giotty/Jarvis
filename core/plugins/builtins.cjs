@@ -1,5 +1,14 @@
 const { definitions, toolSchemas, validate } = require('../tools.cjs');
 const categories = {
+  workspace: [
+    'workspace_list',
+    'workspace_control',
+    'workspace_save',
+    'workspace_library',
+    'workspace_open',
+    'workspace_rename',
+    'workspace_delete',
+  ],
   windows: [
     'list_windows',
     'get_foreground_window',
@@ -122,7 +131,15 @@ function builtins(executor, store, emit) {
           privacy:
             name === 'read_clipboard'
               ? 'clipboard'
-              : ['read_file', 'search_files', 'list_directory', 'list_drives'].includes(name)
+              : [
+                    'read_file',
+                    'search_files',
+                    'list_directory',
+                    'list_drives',
+                    'workspace_list',
+                    'workspace_library',
+                    'workspace_open',
+                  ].includes(name)
                 ? 'files'
                 : name === 'run_powershell'
                   ? 'external'

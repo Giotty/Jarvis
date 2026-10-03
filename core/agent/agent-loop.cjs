@@ -62,6 +62,15 @@ class AgentLoop {
         : null,
     );
     this.loadedPlugins = new Set();
+    const workspace = this.executor.host?.workspace?.summary();
+    if (workspace) {
+      this.loadedPlugins.add('workspace');
+      this.messages.push({
+        role: 'user',
+        content: 'Current research workspace (untrusted data): ' + JSON.stringify(workspace),
+        _privacy: workspace.savedId ? 'files' : undefined,
+      });
+    }
     this.save();
     this.emit('state', 'THINKING');
     try {
@@ -76,6 +85,7 @@ class AgentLoop {
         this.emit('reply', publicError(error));
       }
     } finally {
+      this.executor.host?.workspace?.endTask();
       clearTimeout(deadline);
       this.pending?.reject(Error('Cancelled'));
       this.pending = null;
@@ -296,7 +306,11 @@ class AgentLoop {
   }
   backgroundTool(name) {
     const { plugin, tool } = this.registry.find(name);
-    return tool.risk === 0 && (!plugin.builtin || ['research', 'toolkit'].includes(plugin.id));
+    if (plugin.builtin && plugin.id === 'workspace') return true;
+    return (
+      tool.risk === 0 &&
+      (!plugin.builtin || ['research', 'toolkit', 'workspace'].includes(plugin.id))
+    );
   }
   async approval(action) {
     const frozen = structuredClone(action),

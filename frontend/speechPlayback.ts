@@ -1,3 +1,4 @@
+import { sanitizeSpeech } from '../core/speech-text.mjs';
 type Playback = { done: Promise<void>; stop: () => void };
 type Options = {
   synthesize: (text: string) => Promise<string>;
@@ -39,21 +40,37 @@ export class SpeechPlayback {
   }
   finish() {
     this.ended = true;
+    this.pending = sanitizeSpeech(this.pending);
     this.flush(true);
   }
   speak(text: string) {
     this.begin();
-    this.append(text.slice(0, 2000));
+    this.append(sanitizeSpeech(text).slice(0, 2000));
     this.finish();
   }
   private flush(final: boolean) {
     while (this.pending.trim()) {
-      const sentence = this.pending.match(/^\s*[\s\S]{1,130}?[.!?](?:\s|$)/);
+      const sentence = this.pending.match(
+        final ? /^\s*[\s\S]{1,130}?[.!?](?:\s|$)/ : /^\s*[\s\S]{1,130}?[.!?]\s/,
+      );
       let end = sentence?.[0].length || 0;
-      if (!end && this.pending.length >= 120) end = this.pending.lastIndexOf(' ', 120) + 1 || 120;
+      if (!end && this.pending.length >= 120) end = this.pending.lastIndexOf(' ', 120) + 1;
       if (!end && final) end = this.pending.length;
       if (!end) break;
-      const chunk = this.pending.slice(0, end).trim();
+      const raw = this.pending.slice(0, end);
+      if (
+        !final &&
+        (/^\s*[[{]/.test(this.pending) ||
+          this.pending.includes('```') ||
+          this.pending.includes('<'))
+      )
+        break;
+      if (
+        !final &&
+        ((raw.match(/\[/g)?.length || 0) > (raw.match(/\]/g)?.length || 0) || raw.includes('```'))
+      )
+        break;
+      const chunk = sanitizeSpeech(raw);
       this.pending = this.pending.slice(end);
       if (chunk) this.queue.push(chunk);
     }

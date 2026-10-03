@@ -35,6 +35,7 @@ const { ScreenContext } = require('../core/screen-context.cjs');
 const { BrowserAgent } = require('../core/browser-agent.cjs');
 const { ResearchAgent } = require('../core/research-agent.cjs');
 const { BriefingEngine } = require('../core/briefing.cjs');
+const { ResearchWorkspace, ResearchLibrary, controlSchema } = require('../core/workspace.cjs');
 const { publicError } = require('../core/agent-errors.cjs');
 const { readConfiguration, writeConfiguration } = require('../core/configuration.cjs');
 const { ordinaryNavigation } = require('../core/navigation-safety.cjs');
@@ -84,6 +85,8 @@ let win,
   screenContext,
   browserForDiagnostics,
   briefing,
+  workspace,
+  librarySafety = new Safety(),
   lastStats = {},
   state = 'IDLE',
   statsBusy = false;
@@ -166,6 +169,8 @@ function saveConfig(next) {
   return config;
 }
 function emergencyStop() {
+  librarySafety.stop();
+  if (workspace?.current) workspace.control({ action: 'stop' });
   agent?.cancel();
   speech?.stop();
   speaker?.stop();
@@ -282,6 +287,7 @@ function handlers() {
     memories: store.memories(),
     screenContext: screenContext?.snapshot(),
     briefing: briefing?.last,
+    workspace: workspace?.current,
   }));
   handle('command', (text, turn) =>
     track(() =>
@@ -292,6 +298,7 @@ function handlers() {
     ),
   );
   handle('interrupt', async () => {
+    if (workspace?.current?.playback.state === 'playing') workspace.control({ action: 'pause' });
     screenContext?.prioritizeVoice();
     return agent?.bargeIn() || { taskContinues: false };
   });
@@ -300,6 +307,8 @@ function handlers() {
   );
   handle('cancel', () => emergencyStop());
   handle('cancelTask', () => {
+    librarySafety.stop();
+    if (workspace?.current) workspace.control({ action: 'stop' });
     agent?.cancel();
     emit('speech-abort', true);
   });
@@ -314,11 +323,84 @@ function handlers() {
       z.string().min(1).max(200).parse(model),
     ),
   );
-  handle('researchImage', (id) => agent.executor.host.research.image(z.string().uuid().parse(id)));
+  handle('researchImage', (id) => {
+    id = z.string().uuid().parse(id);
+    const research = agent.executor.host.research;
+    const source = workspace?.current?.sources.find((s) => s.images.some((i) => i.id === id));
+    if (source) research.restoreImages([source]);
+    return research.image(id);
+  });
+  const requireWorkspace = () => {
+    if (!registry.enabled('workspace')) throw Error('Research workspace plugin is disabled.');
+  };
+  handle('workspaceControl', (input) => {
+    requireWorkspace();
+    return workspace.control(controlSchema.parse(input));
+  });
+  handle('workspaceComplete', (input) => {
+    requireWorkspace();
+    return workspace.complete(
+      z
+        .object({
+          sessionId: z.string().uuid(),
+          moduleId: z.string().uuid(),
+          segment: z.number().int().min(0).max(15),
+          epoch: z.number().int().min(0),
+        })
+        .strict()
+        .parse(input),
+    );
+  });
+  handle('researchLibrary', () => {
+    requireWorkspace();
+    return workspace.library.list();
+  });
+  handle('saveResearch', () => {
+    requireWorkspace();
+    return workspace.save();
+  });
+  handle('openResearch', (key) => {
+    requireWorkspace();
+    agent.cancel();
+    return workspace.open(z.string().uuid().parse(key));
+  });
+  handle('renameResearch', (key, topic) => {
+    requireWorkspace();
+    return workspace.library.rename(
+      z.string().uuid().parse(key),
+      z.string().trim().min(1).max(120).parse(topic),
+    );
+  });
+  handle('requestResearchDelete', (key) => {
+    requireWorkspace();
+    const entry = workspace.library.list().find((s) => s.id === key);
+    if (!entry) throw Error('Saved briefing not found.');
+    librarySafety.resume();
+    librarySafety.pending.clear();
+    return {
+      ...librarySafety.require(
+        { tool: 'workspace_delete', args: { id: entry.id, topic: entry.topic } },
+        3,
+        'research-library',
+      ),
+      kind: 'research-delete',
+    };
+  });
+  handle('confirmResearchDelete', (key, yes) => {
+    requireWorkspace();
+    if (!z.boolean().parse(yes)) {
+      librarySafety.pending.delete(z.string().uuid().parse(key));
+      return { success: false, cancelled: true };
+    }
+    const action = librarySafety.consume(z.string().uuid().parse(key), z.boolean().parse(yes));
+    return workspace.library.delete(action.args.id);
+  });
   handle('openResearchSource', (id) => {
     const selected = z.string().max(200).parse(id);
     const source =
-      briefing.sources.get(selected) || briefing.last?.sources.find((s) => s.id === selected);
+      briefing.sources.get(selected) ||
+      briefing.last?.sources.find((s) => s.id === selected) ||
+      workspace?.current?.sources.find((s) => s.id === selected);
     if (!source) throw Error('Research source expired.');
     return shell.openExternal(source.url);
   });
@@ -392,7 +474,11 @@ function handlers() {
     screenContext?.prioritizeVoice();
     if (!config.tts || config.ttsEngine === 'windows')
       throw Error('Local neural voice output is not enabled.');
-    return speaker.synthesize(z.string().min(1).max(2000).parse(text), voiceSettings());
+    const clean = (await import('../core/speech-text.mjs')).sanitizeSpeech(
+      z.string().min(1).max(2000).parse(text),
+    );
+    if (!clean) throw Error('There is no spoken text in that formatting.');
+    return speaker.synthesize(clean, voiceSettings());
   });
   handle('transcribe', async (audio) => {
     screenContext?.prioritizeVoice();
@@ -490,7 +576,11 @@ async function init() {
   secrets = new SecretStore(dir, safeStorage);
   ai = new ProviderRouter({ config: () => config, secrets, local: ollama, emit });
   const safety = new Safety();
-  briefing = new BriefingEngine({ emit });
+  const library = new ResearchLibrary(path.join(dir, 'Research'), () =>
+    emit('research-library', true),
+  );
+  workspace = new ResearchWorkspace({ emit, library, autoNarrate: () => config.tts });
+  briefing = new BriefingEngine({ emit, workspace });
   const visionConfig = () => ({
     ...config,
     vision: config.pluginEnabled.screen === false ? 'off' : config.vision,
@@ -641,6 +731,7 @@ async function init() {
           : withTarget(() => nativeCall(tool, args, signal)),
       browser,
       research,
+      workspace,
       verifyApplication,
       screenState: () => screenContext.snapshot(),
       visibleWindows: async () => (await nativeCall('list_windows')).windows,
@@ -838,6 +929,7 @@ async function init() {
   await sample();
   timer = setInterval(sample, 3000);
   screenContext.start();
+  workspace.images = research;
   if (smokeArg) {
     await sample();
     await new Promise((r) => setTimeout(r, 1500));
@@ -847,7 +939,7 @@ async function init() {
     fs.writeFileSync(path.join(dir, 'smoke-result.json'), JSON.stringify(result, null, 2));
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(path.join(dir, 'hud.png'), shot.toPNG());
-    await require('../core/runtime-smoke.cjs').smoke(win, dir);
+    await require('../core/runtime-smoke.cjs').smoke(win, dir, { workspace, briefing });
     quitting = true;
     app.quit();
   }

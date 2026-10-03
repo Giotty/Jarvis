@@ -197,6 +197,7 @@ export type Task = {
 };
 export type Memory = { id: number; category: string; content: string };
 export type Confirmation = {
+  kind?: 'research-delete';
   id: string;
   risk: number;
   action: { tool: string; args: Record<string, unknown> };
@@ -246,7 +247,84 @@ export type Audit = {
   diagnostic?: string;
 };
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+export type WorkspaceFocus = { panel: number; item?: number; datum?: number; imageId?: string };
+export type WorkspaceSegment = WorkspaceFocus & { text: string };
+export type WorkspaceModule = {
+  id: string;
+  title: string;
+  panels: BriefingPanel[];
+  segments: WorkspaceSegment[];
+  layout: { x: number; y: number; width: number; height: number };
+  state: 'active' | 'ready' | 'docked' | 'closed';
+  pinned: boolean;
+  completed: boolean;
+  focus?: WorkspaceFocus;
+};
+export type Workspace = {
+  id: string;
+  topic: string;
+  created: number;
+  updated: number;
+  savedId: string | null;
+  sources: Briefing['sources'];
+  modules: WorkspaceModule[];
+  researching: boolean;
+  playback: {
+    state: 'idle' | 'playing' | 'paused' | 'waiting' | 'complete' | 'stopped';
+    moduleId: string | null;
+    segment: number;
+    epoch: number;
+  };
+};
+export type WorkspaceControl = {
+  action:
+    | 'pause'
+    | 'resume'
+    | 'stop'
+    | 'next'
+    | 'previous'
+    | 'repeat'
+    | 'focus'
+    | 'move'
+    | 'resize'
+    | 'minimize'
+    | 'expand'
+    | 'close'
+    | 'pin'
+    | 'compare'
+    | 'highlight';
+  moduleId?: string;
+  otherModuleId?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  panel?: number;
+  item?: number;
+  datum?: number;
+  imageId?: string;
+};
+export type ResearchEntry = {
+  id: string;
+  topic: string;
+  created: number;
+  lastOpened: number | null;
+  moduleCount: number;
+};
 export type JarvisAPI = {
+  workspaceControl: (input: WorkspaceControl) => Promise<Result<unknown>>;
+  workspaceComplete: (input: {
+    sessionId: string;
+    moduleId: string;
+    segment: number;
+    epoch: number;
+  }) => Promise<Result<unknown>>;
+  researchLibrary: () => Promise<Result<ResearchEntry[]>>;
+  saveResearch: () => Promise<Result<{ entry: ResearchEntry }>>;
+  openResearch: (id: string) => Promise<Result<unknown>>;
+  renameResearch: (id: string, topic: string) => Promise<Result<ResearchEntry>>;
+  requestResearchDelete: (id: string) => Promise<Result<Confirmation>>;
+  confirmResearchDelete: (id: string, yes: boolean) => Promise<Result<unknown>>;
   snapshot: () => Promise<
     Result<{
       config: Config;
@@ -259,6 +337,7 @@ export type JarvisAPI = {
       aiUsage?: AIUsage;
       plugins?: Plugin[];
       briefing?: Briefing;
+      workspace?: Workspace;
     }>
   >;
   command: (text: string, turn?: string) => Promise<Result<void>>;

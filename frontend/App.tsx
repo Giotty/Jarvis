@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sparkline } from './Core';
 import { Reactor } from './Reactor';
 import { ConfirmationRing } from './ConfirmationRing';
-import { BriefingView } from './BriefingView';
+import { WorkspaceView, ResearchLibraryView } from './WorkspaceView';
+import { sanitizeSpeech } from '../core/speech-text.mjs';
 import { ControlDeck, UtilityDrawer, categories, Category } from './ControlDeck';
 import { Setup } from './Initialization';
 import { useVoice } from './useVoice';
 import { SpeechPlayback } from './speechPlayback';
 import {
   Briefing,
+  Workspace,
+  WorkspaceControl,
   Audit,
   Config,
   Confirmation,
@@ -107,9 +110,10 @@ export function App() {
     [voiceName] = useState(''),
     [settingsOpen, setSettingsOpen] = useState(false),
     [settingCategory, setSettingCategory] = useState<Category | null>(null),
-    [briefing, setBriefing] = useState<Briefing | null>(null),
     [briefingVisible, setBriefingVisible] = useState(false),
-    [autoNarration, setAutoNarration] = useState(0),
+    [workspace, setWorkspace] = useState<Workspace | null>(null),
+    [libraryOpen, setLibraryOpen] = useState(false),
+    [hudHidden, setHudHidden] = useState(document.hidden),
     [outputLevel, setOutputLevel] = useState(0);
   const nextId = useRef(1),
     partialReply = useRef<number | null>(null),
@@ -121,6 +125,16 @@ export function App() {
     acceptReplies = useRef(true);
   const narrationDone = useRef<(() => void) | null>(null),
     narrateThisTask = useRef(false);
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const closeWorkspace = useCallback(() => setBriefingVisible(false), []),
+    openLibrary = useCallback(() => setLibraryOpen(true), []);
+  const stopNarration = useCallback(() => {
+    narrationDone.current = null;
+    speechGeneration.current++;
+    player.current?.stop();
+    speechSynthesis.cancel();
+  }, []);
   const confirmationRef = useRef(confirmation);
   confirmationRef.current = confirmation;
   configRef.current = config;
@@ -214,6 +228,8 @@ export function App() {
         done?.();
       },
       error: (error) => {
+        narrationDone.current = null;
+        void window.jarvis?.workspaceControl({ action: 'pause' });
         report(String(error));
         setState('ERROR');
       },
@@ -221,7 +237,8 @@ export function App() {
   const speak = useCallback(
     (text: string) => {
       const c = configRef.current;
-      if (!c?.tts) return;
+      text = sanitizeSpeech(text);
+      if (!c?.tts || !text) return;
       const generation = ++speechGeneration.current;
       player.current?.stop();
       speechSynthesis.cancel();
@@ -252,8 +269,11 @@ export function App() {
         if (
           generation === speechGeneration.current &&
           !['interrupted', 'canceled'].includes(event.error)
-        )
+        ) {
+          narrationDone.current = null;
+          void window.jarvis?.workspaceControl({ action: 'pause' });
           setState('ERROR');
+        }
       };
       speechSynthesis.speak(speech);
     },
@@ -261,11 +281,26 @@ export function App() {
   );
   const narrate = useCallback(
     (text: string, done: () => void) => {
-      speak(text);
+      const clean = sanitizeSpeech(text);
+      if (!clean) {
+        done();
+        return;
+      }
+      if (!configRef.current?.tts) {
+        void window.jarvis?.workspaceControl({ action: 'pause' });
+        report('Enable voice output to resume narration.');
+        return;
+      }
       narrationDone.current = done;
+      speak(clean);
     },
-    [speak],
+    [speak, report],
   );
+  useEffect(() => {
+    const change = () => setHudHidden(document.hidden);
+    document.addEventListener('visibilitychange', change);
+    return () => document.removeEventListener('visibilitychange', change);
+  }, []);
   useEffect(() => {
     const exit = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -300,6 +335,23 @@ export function App() {
         report('Stopped.', 'JARVIS');
         return;
       }
+      if (workspaceRef.current) {
+        const transport: Record<string, WorkspaceControl['action']> = {
+          pause: 'pause',
+          resume: 'resume',
+          continue: 'resume',
+          next: 'next',
+          previous: 'previous',
+          'go back': 'previous',
+          'repeat this section': 'repeat',
+        };
+        const action = transport[spoken.toLowerCase().replace(/[.!]+$/, '')];
+        if (action) {
+          report(text, 'USER');
+          await unwrap(window.jarvis.workspaceControl({ action }));
+          return;
+        }
+      }
       const pending = confirmationRef.current;
       if (pending && /^(?:yes|confirm|go ahead|no|cancel)[.!]*$/i.test(spoken)) {
         if (pending.risk >= 3) {
@@ -321,7 +373,7 @@ export function App() {
       }
       narrationDone.current = null;
       narrateThisTask.current = false;
-      setAutoNarration(0);
+
       player.current?.stop();
       speechSynthesis.cancel();
       commandBusy.current = true;
@@ -335,6 +387,8 @@ export function App() {
       setHistory((h) => [text, ...h].slice(0, 100));
       setHistoryIndex(-1);
       try {
+        if (workspaceRef.current?.playback.state === 'playing')
+          await unwrap(window.jarvis.workspaceControl({ action: 'pause' }));
         await unwrap(window.jarvis.command(text, turn));
       } catch (e) {
         if (epoch === commandEpoch.current) {
@@ -384,14 +438,20 @@ export function App() {
         setScreenContext(s.screenContext || null);
         setAIUsage(s.aiUsage || null);
         setPlugins(s.plugins || []);
-        if (s.briefing) setBriefing(s.briefing);
+        if (s.workspace) {
+          setWorkspace(s.workspace);
+          setBriefingVisible(true);
+        }
       })
       .catch((e) => report(String(e)));
     const unsub = api.on((e) => {
       switch (e.type) {
-        case 'briefing':
-          setBriefing(e.data as Briefing);
+        case 'workspace':
+          setWorkspace(e.data as Workspace);
           setBriefingVisible(true);
+          if ((e.data as Workspace).playback.state === 'playing') narrateThisTask.current = true;
+          break;
+        case 'briefing':
           if ((e.data as Briefing).modelOrganized) narrateThisTask.current = true;
           break;
         case 'ai-usage':
@@ -432,6 +492,7 @@ export function App() {
             player.current?.append(e.data as string);
           break;
         case 'speech-abort':
+          if (narrateThisTask.current) break;
           player.current?.stop();
           streamedSpeech.current = false;
           break;
@@ -448,9 +509,7 @@ export function App() {
             partialReply.current = null;
           }
           if (narrateThisTask.current && configRef.current?.tts) {
-            player.current?.stop();
             streamedSpeech.current = false;
-            setAutoNarration((n) => n + 1);
           } else if (streamedSpeech.current) {
             player.current?.finish();
             streamedSpeech.current = false;
@@ -612,7 +671,9 @@ export function App() {
         (config?.animationIntensity || 'normal') +
         (settingsOpen ? ' settings-open' : '') +
         (settingCategory ? ' category-open' : '') +
-        (briefingVisible && briefing && !settingsOpen ? ' briefing-open' : '') +
+        (briefingVisible && workspace && !settingsOpen ? ' briefing-open' : '') +
+        (hudHidden ? ' hud-hidden' : '') +
+        ((stats?.gpu || 0) > 80 ? ' gpu-loaded' : '') +
         (confirmation ? ' confirmation-active' : '')
       }
     >
@@ -875,17 +936,22 @@ export function App() {
             onSetup={() => setSetup(true)}
           />
         )}
-        {briefingVisible && briefing && !settingsOpen && page === 'HOME' && (
-          <BriefingView
-            key={briefing.id}
-            briefing={briefing}
+        {briefingVisible && workspace && !settingsOpen && page === 'HOME' && (
+          <WorkspaceView
+            workspace={workspace}
             onNarrate={narrate}
-            onInterrupt={() => {
-              void interrupt();
-            }}
-            onClose={() => setBriefingVisible(false)}
-            interrupted={voice.listening && voice.level > 0.06}
-            autoStart={autoNarration}
+            onInterrupt={stopNarration}
+            onClose={closeWorkspace}
+            onLibrary={openLibrary}
+            onError={report}
+            gpuLoad={stats?.gpu}
+          />
+        )}
+        {libraryOpen && (
+          <ResearchLibraryView
+            onClose={() => setLibraryOpen(false)}
+            onDelete={setConfirmation}
+            onError={report}
           />
         )}
         {page !== 'HOME' && !settingsOpen && (
@@ -930,7 +996,10 @@ export function App() {
             <button aria-label="Audit log" onClick={() => selectPage('LOGS')}>
               LOGS
             </button>
-            {briefing && (
+            <button onClick={openLibrary} aria-label="Research library">
+              RESEARCH LIBRARY
+            </button>
+            {workspace && (
               <button
                 onClick={() => {
                   setBriefingVisible(true);
@@ -1053,7 +1122,11 @@ export function App() {
             const c = confirmation;
             setConfirmation(null);
             if (window.jarvis)
-              void unwrap(window.jarvis.confirm(c.id, yes)).catch((e) => report(String(e)));
+              void unwrap(
+                c.kind === 'research-delete'
+                  ? window.jarvis.confirmResearchDelete(c.id, yes)
+                  : window.jarvis.confirm(c.id, yes),
+              ).catch((e) => report(String(e)));
           }}
         />
       )}

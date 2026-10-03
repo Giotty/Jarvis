@@ -1,5 +1,6 @@
 const base = [
   'enable_tools',
+  'workspace_list',
   'analyze_screen',
   'get_foreground_window',
   'list_windows',
@@ -23,6 +24,15 @@ const base = [
   'list_ui_elements',
 ];
 const families = {
+  workspace: [
+    'workspace_control',
+    'workspace_save',
+    'workspace_library',
+    'workspace_open',
+    'workspace_rename',
+    'workspace_delete',
+    'present_briefing',
+  ],
   files: [
     'list_drives',
     'list_directory',

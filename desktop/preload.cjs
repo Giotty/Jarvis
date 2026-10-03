@@ -1,6 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const methods = [
   'snapshot',
+  'workspaceControl',
+  'workspaceComplete',
+  'researchLibrary',
+  'saveResearch',
+  'openResearch',
+  'renameResearch',
+  'requestResearchDelete',
+  'confirmResearchDelete',
   'researchImage',
   'openResearchSource',
   'command',

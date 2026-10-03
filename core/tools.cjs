@@ -8,11 +8,52 @@ const system = require('./windows-system.cjs');
 const text = z.string().min(1).max(8000),
   coord = z.number().int().min(-20000).max(20000);
 const definitions = {
+  workspace_list: {
+    risk: 0,
+    schema: z.object({ moduleId: z.string().uuid().optional() }).strict(),
+    description:
+      'Read current research module IDs, titles, layouts and playback state. Use workspace tools to manipulate the in-app briefing instead of desktop mouse input.',
+  },
+  workspace_control: {
+    risk: 0,
+    schema: require('./workspace.cjs').controlSchema,
+    description:
+      'Control the research workspace generically: pause/resume/stop/next/previous/repeat narration; focus/move/resize/minimize/expand/close/pin modules, compare two IDs side-by-side, highlight actual panel/item/datum/image. Coordinates/sizes are normalized 0–1 and bounded by the host. Read module IDs first. Close removes a module from view, not its saved data.',
+  },
+  workspace_save: {
+    risk: 1,
+    schema: z.object({}).strict(),
+    description:
+      'Save the full current briefing and layout locally in the app research library, including sources and image references.',
+  },
+  workspace_library: {
+    risk: 0,
+    schema: z.object({ query: z.string().max(120).default('') }).strict(),
+    description:
+      'List saved local research sessions by topic, ID and creation/last-open dates. Read before reopening a specific session.',
+  },
+  workspace_open: {
+    risk: 0,
+    schema: z.object({ id: z.string().uuid() }).strict(),
+    description:
+      'Reopen an existing saved research session by its library ID. Does not re-research or automatically start speech.',
+  },
+  workspace_rename: {
+    risk: 1,
+    schema: z.object({ id: z.string().uuid(), topic: z.string().trim().min(1).max(120) }).strict(),
+    description: 'Rename an explicitly selected saved briefing in the local app library.',
+  },
+  workspace_delete: {
+    risk: 3,
+    schema: z.object({ id: z.string().uuid() }).strict(),
+    description:
+      'Delete one explicitly selected saved research session only after critical host confirmation.',
+  },
   present_briefing: {
     risk: 0,
     schema: require('./briefing.cjs').briefingSchema,
     description:
-      'Present a structured visual briefing INSIDE JARVIS after research. Use briefingSources IDs from actual tool observations. Organize unfamiliar topics into concise narrated scenes with text, metrics, charts, images, comparisons, timelines and sources. No arbitrary code or invented chart values. imageIds must be returned by the cited sources. One to eight scenes, at most four panels per scene. Prefer two to four concise scenes initially; panel bodies under 200 characters and scene narration under 250 characters reduce generation latency. Optional per-panel narration highlights that panel during playback. Use this for detailed research, explanations and visual comparisons, then give a short final answer.',
+      'Create safe spatial research modules INSIDE JARVIS using actual briefingSources IDs. Each scene becomes a movable/dockable module; mode=replace starts a new topic, mode=append extends the existing topic/follow-up. Present one concise module early, then continue missing research while it narrates; append further modules instead of repeating prior coverage. Optional segments contain natural speech and valid zero-based panel/item/datum or imageId focus targets; completed audio automatically changes focus/modules. No formatting/URLs in narration; show source links visually. No code, invented chart values or image IDs. Prefer official/relevant images, short text and separate charts/images/item panels. Give a short final answer.',
   },
   find_images: {
     risk: 0,
@@ -35,6 +76,7 @@ const definitions = {
           'system',
           'browser',
           'screen',
+          'workspace',
         ]),
       })
       .strict(),
@@ -816,13 +858,40 @@ class Executor {
         'extract_page_text',
         'summarize_page',
         'enable_tools',
-      ].includes(a.tool)
+      ].includes(a.tool) &&
+      !a.tool.startsWith('workspace_')
     )
       return { mock: true, message: `Simulated ${a.tool}; no PC input or file changes.` };
     const p = a.args;
     if (['type_text', 'fill_search'].includes(a.tool)) p.allowMouseFocus = c.mouse === true;
     if (a.tool === 'type_text') p.allowSensitive = action.risk >= 2;
     switch (a.tool) {
+      case 'workspace_list':
+        return {
+          success: true,
+          verified: true,
+          observedState: this.host.workspace.summary(p.moduleId),
+        };
+      case 'workspace_control':
+        return this.host.workspace.control(p);
+      case 'workspace_save':
+        return this.host.workspace.save();
+      case 'workspace_library':
+        return {
+          success: true,
+          verified: true,
+          entries: this.host.workspace.library.list(p.query),
+        };
+      case 'workspace_open':
+        return this.host.workspace.open(p.id);
+      case 'workspace_rename':
+        return {
+          success: true,
+          verified: true,
+          entry: this.host.workspace.library.rename(p.id, p.topic),
+        };
+      case 'workspace_delete':
+        return this.host.workspace.library.delete(p.id);
       case 'enable_tools':
         return {
           success: true,

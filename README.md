@@ -1,10 +1,10 @@
 # JARVIS — MAATOUK INDUSTRIES
 
-**0.3.0** rebuilds JARVIS around one general AI desktop agent and an original reactor HUD. Voice/text share reasoning, dynamic tools, observation, verification and recovery. New requests are interpreted by the model, without a bespoke handler for every utterance.
+**0.4.0** adds a spatial research workspace to JARVIS's general AI desktop agent and original reactor HUD. Narration focuses, advances and docks movable research modules automatically. Briefings can be compared, saved and reopened locally. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
 
 ## Launch
 
-Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.3.0.exe`.
+Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.4.0.exe`.
 
 The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **Kokoro bm_george** British male speech. Piper/Windows voices remain supported. Windows currently exposes **no recording endpoint**: connect/enable a microphone and choose it in radial VOICE settings.
 
@@ -43,9 +43,9 @@ Computer file scope searches accessible local drives/deep/hidden folders in boun
 
 Background public search/pages, weather, YouTube metadata/feeds and page-associated images feed a source registry without opening Google. Explicit open/watch/interact requests can still use browser tools.
 
-The model organizes citations into 1–8 typed scenes: text, metrics, comparisons, timelines, charts, radial percentages, sources/images. Panel pairs/text/items have page controls. Code/HTML is rejected. Chart numbers must occur in cited evidence; interpretation and synthesized claims still need judgment. Sources distinguish read pages/snippets. Images use registered IDs, validated public addresses/redirects, DNS-pinned fetching, lazy bounded memory caching and unavailable placeholders. No media is saved to disk. Video/map panels are previews/text, not embedded playback/maps.
+The model presents verified sections progressively as spatial modules: text, metrics, comparisons, timelines, charts, radial percentages and sources/images. Move, resize, expand, pin, dock or compare modules; summaries/items have page controls. SAVE BRIEFING preserves content, layout and image references in the app data Research folder. The compact RESEARCH LIBRARY control reopens, renames or deletes sessions with confirmation. Code/HTML is rejected; chart numbers must occur in cited evidence. Images use registered IDs, validated public addresses/redirects, DNS-pinned fetching, lazy bounded caching, pseudo-3D planes and unavailable placeholders. Image bytes remain in memory. Video/map panels are previews/text, not embedded playback/maps.
 
-NARRATE/PAUSE/PREVIOUS/NEXT/STOP follow actual completed playback; optional panel narration highlights the spoken panel. Interruptions invalidate callbacks. Spoken stop/cancel/wait/never-mind cancels tasks; ordinary speech interruption stops playback while approvals remain explicit.
+Narration automatically highlights content, advances sections and retains completed modules in the dock after actual audio playback. PAUSE/RESUME/PREVIOUS/NEXT/REPEAT/STOP remain optional. Interruptions invalidate callbacks. A shared sanitizer removes spoken URLs, formatting, emojis and source IDs while keeping visual citations. Spoken stop/cancel/wait/never-mind cancels tasks; ordinary speech interruption stops playback while approvals remain explicit.
 
 Screen OFF/MANUAL/WHILE AWAKE/CONTINUOUS modes retain adaptive capture, hashes/differences, foreground context and throttled local vision. Gaming uses visible pixels only, without game-memory inspection/injection/combat automation. Proactive help defaults LOW.
 
@@ -72,4 +72,4 @@ Set absolute Python/model paths in settings. Existing installation scripts repro
 
 Architecture: frontend React/TypeScript/SVG; desktop sandboxed Electron/finite validated IPC; core/agent general loop; core/providers routing; core/plugins MCP/manifests; core/briefing.cjs scenes; core/research-agent.cjs public retrieval; voice workers; tests regression/mocks.
 
-See [rebuild report](docs/REBUILD_REPORT.md), [verification/limits](docs/VERIFICATION.md) and [safety](docs/SAFETY.md). A smooth HUD does not guarantee fast inference. Short tasks and a source-backed briefing passed; broader research and screen analysis encountered local timeouts. Every model decision/website/app control cannot be guaranteed.
+See [spatial research](docs/SPATIAL-RESEARCH.md), [rebuild report](docs/REBUILD_REPORT.md), [verification/limits](docs/VERIFICATION.md) and [safety](docs/SAFETY.md). UI checks do not guarantee fast inference. The new presentation infrastructure passed isolated integration checks; live Ollama research timed out during this update. Every model decision/website/app control cannot be guaranteed.
