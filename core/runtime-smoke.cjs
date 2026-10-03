@@ -36,6 +36,44 @@ async function smoke(win, directory, host) {
     JSON.stringify({ ...checks, providerUI }, null, 2),
   );
   if (host) {
+    if (process.argv.includes('--smoke-greeting')) {
+      const greeting = await win.webContents.executeJavaScript(`(async()=>{
+        const api=window.jarvis,replies=[];const unsubscribe=api.on(e=>{if(e.type==='reply')replies.push(e.data)});
+        try {await api.command('Hey Jarvis');await api.command('Hello again, how are you?');}
+        finally{unsubscribe()}
+        return {replies};
+      })()`);
+      if (
+        host.agent.active?.status !== 'completed' ||
+        greeting.replies.length !== 2 ||
+        greeting.replies.some((text) => /unavailable|too long|try again/i.test(text))
+      )
+        throw Error('Packaged greeting check failed');
+      const voice = await win.webContents.executeJavaScript(`(async()=>{
+        const api=window.jarvis, c=(await api.snapshot()).data.config;
+        const saved=await api.settings({...c,tts:true,ttsEngine:'kokoro',kokoroVoice:'bm_daniel'});
+        if(!saved.ok)throw Error(saved.error);
+        const result=await api.synthesize('Good evening, sir. I am listening.');
+        if(!result.ok)throw Error(result.error);
+        return result.data;
+      })()`);
+      if (voice.engine !== 'kokoro' || voice.voice !== 'bm_daniel' || !voice.audio)
+        throw Error('Packaged British male voice check failed');
+      const audio = Buffer.from(voice.audio, 'base64');
+      if (audio.toString('ascii', 0, 4) !== 'RIFF') throw Error('Invalid synthesized audio');
+      fs.writeFileSync(path.join(directory, 'british-male.wav'), audio);
+      fs.writeFileSync(
+        path.join(directory, 'greeting-voice-checks.json'),
+        JSON.stringify(
+          { ...greeting, engine: voice.engine, voice: voice.voice, audioBytes: audio.length },
+          null,
+          2,
+        ),
+      );
+      await win.webContents.executeJavaScript(
+        `(async()=>{const c=(await window.jarvis.snapshot()).data.config;await window.jarvis.settings({...c,tts:false})})()`,
+      );
+    }
     // Only called from the existing isolated --smoke-test profile, never owner data.
     const [{ id }] = host.briefing.observe({
       tool: 'extract_page_text',

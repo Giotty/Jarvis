@@ -971,7 +971,7 @@ async function init() {
     fs.writeFileSync(path.join(dir, 'smoke-result.json'), JSON.stringify(result, null, 2));
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(path.join(dir, 'hud.png'), shot.toPNG());
-    await require('../core/runtime-smoke.cjs').smoke(win, dir, { workspace, briefing });
+    await require('../core/runtime-smoke.cjs').smoke(win, dir, { workspace, briefing, agent });
     quitting = true;
     app.quit();
   }

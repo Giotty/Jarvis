@@ -420,7 +420,9 @@ export type JarvisAPI = {
   tasks: () => Promise<Result<Task[]>>;
   logs: () => Promise<Result<Audit[]>>;
   transcribe: (audio: string) => Promise<Result<{ text: string }>>;
-  synthesize: (text: string) => Promise<Result<{ audio: string }>>;
+  synthesize: (
+    text: string,
+  ) => Promise<Result<{ audio: string; engine: 'kokoro' | 'piper'; voice: string }>>;
   diagnostics: () => Promise<Result<Diagnostics>>;
   browserState: () => Promise<Result<BrowserState>>;
   selectRoot: () => Promise<Result<string | null>>;

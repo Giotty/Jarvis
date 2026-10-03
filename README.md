@@ -1,12 +1,12 @@
 # JARVIS — MAATOUK INDUSTRIES
 
-**0.5.0** adds a persistent floating research wall, model-selected response modes, narration choreography, user grab locks, staged files, grouping, and a local file/group/workspace library with folders. The circular Maatouk HUD remains unchanged. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
+**0.5.1** fixes direct-launch Ollama recovery and British male voice selection. The 0.5.0 update adds a persistent floating research wall, model-selected response modes, narration choreography, user grab locks, staged files, grouping, and a local file/group/workspace library with folders. The circular Maatouk HUD remains unchanged. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
 
 ## Launch
 
-Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.5.0.exe`.
+Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.5.1.exe`.
 
-The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **Kokoro bm_george** British male speech. Piper/Windows voices remain supported. Windows currently exposes **no recording endpoint**: connect/enable a microphone and choose it in radial VOICE settings.
+The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **Kokoro bm_daniel** British male speech. Piper/Windows voices remain supported. Windows currently exposes **no recording endpoint**: connect/enable a microphone and choose it in radial VOICE settings.
 
 ## Interface
 
@@ -27,7 +27,7 @@ Radial AI settings configure primary/fallback/dedicated-vision providers and mod
 
 Capabilities: TEXT/VISION/TOOLS/STRUCTURED_OUTPUT/STREAMING/REASONING. Ollama supplies local flags. Unknown cloud models start conservatively; set their profile from model documentation. A vision-only route can caption for the tool-capable primary. Fallback obeys cloud OFF, local-only tasks, sharing permissions and cancellation.
 
-For cloud use, configure a model, **SAVE KEY SECURELY**, enable cloud AI in PRIVACY and save. Keys/tokens use safeStorage/Windows DPAPI; IPC returns presence only. No account/key is supplied. Provider quotas/charges are not guaranteed free. The owner profile remains local/cloud OFF.
+For cloud use, configure a model, **SAVE KEY SECURELY**, enable cloud AI in PRIVACY and save. Keys/tokens use safeStorage/Windows DPAPI; IPC returns presence only. No account/key is supplied. Provider quotas/charges are not guaranteed free. The owner profile remains local/cloud OFF. If the installed default local Ollama server is stopped, JARVIS starts it automatically on a refused connection. The first request after model unloading still needs warmup.
 
 ## Agent, plugins and safety
 

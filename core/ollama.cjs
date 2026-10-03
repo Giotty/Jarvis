@@ -1,6 +1,8 @@
+const { OllamaService } = require('./ollama-service.cjs');
 class Ollama {
-  constructor(config) {
+  constructor(config, { service = new OllamaService() } = {}) {
     this.config = config;
+    this.service = service;
     this.capabilityCache = new Map();
   }
   async capabilities(model, signal) {
@@ -29,21 +31,38 @@ class Ollama {
     throw Error('No installed vision model is available. Select a vision model in Settings.');
   }
   async request(route, body, signal, onDelta) {
-    const r = await fetch(this.config().ollamaUrl + route, {
-      method: body ? 'POST' : 'GET',
-      headers: body ? { 'Content-Type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
-      signal: signal
-        ? AbortSignal.any([
-            signal,
-            AbortSignal.timeout(
+    const send = () =>
+      fetch(this.config().ollamaUrl + route, {
+        method: body ? 'POST' : 'GET',
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+        signal: signal
+          ? AbortSignal.any([
+              signal,
+              AbortSignal.timeout(
+                route === '/api/chat'
+                  ? this.config().providerTimeout || 45000
+                  : body
+                    ? 60000
+                    : 5000,
+              ),
+            ])
+          : AbortSignal.timeout(
               route === '/api/chat' ? this.config().providerTimeout || 45000 : body ? 60000 : 5000,
             ),
-          ])
-        : AbortSignal.timeout(
-            route === '/api/chat' ? this.config().providerTimeout || 45000 : body ? 60000 : 5000,
-          ),
-    });
+      });
+    let r;
+    try {
+      r = await send();
+    } catch (error) {
+      if (
+        signal?.aborted ||
+        !['ECONNREFUSED', 'UND_ERR_SOCKET'].includes(error.cause?.code) ||
+        !(await this.service.ensure(this.config().ollamaUrl, signal))
+      )
+        throw error;
+      r = await send();
+    }
     if (!r.ok) {
       const detail = await r.json().catch(() => ({}));
       const error = Error(`Ollama returned ${r.status}: ${detail.error || r.statusText}`);

@@ -4,6 +4,7 @@ import { Reactor } from './Reactor';
 import { ConfirmationRing } from './ConfirmationRing';
 import { WorkspaceView, ResearchLibraryView } from './WorkspaceView';
 import { sanitizeSpeech } from '../core/speech-text.mjs';
+import { chooseMaleLocalVoice } from '../core/local-voice.mjs';
 import { ControlDeck, UtilityDrawer, categories, Category } from './ControlDeck';
 import { Setup } from './Initialization';
 import { useVoice } from './useVoice';
@@ -107,7 +108,6 @@ export function App() {
       ram: [],
       gpu: [],
     }),
-    [voiceName] = useState(''),
     [settingsOpen, setSettingsOpen] = useState(false),
     [settingCategory, setSettingCategory] = useState<Category | null>(null),
     [briefingVisible, setBriefingVisible] = useState(false),
@@ -167,7 +167,15 @@ export function App() {
   );
   if (!player.current)
     player.current = new SpeechPlayback({
-      synthesize: async (text) => (await unwrap(window.jarvis!.synthesize(text))).audio,
+      synthesize: async (text) => {
+        const selected = configRef.current;
+        const result = await unwrap(window.jarvis!.synthesize(text));
+        const voice =
+          selected?.ttsEngine === 'kokoro' ? selected.kokoroVoice : selected?.piperVoicePath;
+        if (result.engine !== selected?.ttsEngine || result.voice !== voice)
+          throw Error('Voice selection changed. Please retry with the selected local voice.');
+        return result.audio;
+      },
       play: (data) => {
         const audio = new Audio('data:audio/wav;base64,' + data);
         let finish!: () => void,
@@ -250,14 +258,15 @@ export function App() {
       const speech = new SpeechSynthesisUtterance(text);
       speech.rate = c.speechSpeed;
       speech.volume = c.speechVolume;
-      const voice =
-        speechSynthesis.getVoices().find((v) => v.name === voiceName && v.localService) ||
-        speechSynthesis.getVoices().find((v) => v.localService);
+      const voice = chooseMaleLocalVoice(speechSynthesis.getVoices());
       if (!voice) {
-        report('No local TTS voice available. Install a Windows voice.');
+        report(
+          'No local English male voice is available. Select Kokoro British speech in VOICE settings.',
+        );
         return;
       }
       speech.voice = voice;
+      speech.lang = voice.lang;
       speech.onstart = () => setState('SPEAKING');
       speech.onend = () => {
         setState((s) => (s === 'SPEAKING' ? 'IDLE' : s));
@@ -277,7 +286,7 @@ export function App() {
       };
       speechSynthesis.speak(speech);
     },
-    [voiceName, report],
+    [report],
   );
   const narrate = useCallback(
     (text: string, done: () => void) => {
@@ -428,6 +437,7 @@ export function App() {
     unwrap(api.snapshot())
       .then((s) => {
         if (!alive) return;
+        configRef.current = s.config;
         setConfig(s.config);
         setSetup(!s.config.setupComplete);
         setStats(s.stats);
@@ -569,6 +579,17 @@ export function App() {
             speechRef.current(e.data as string);
           break;
         case 'config':
+          if (
+            configRef.current &&
+            ['ttsEngine', 'kokoroVoice', 'piperVoicePath'].some(
+              (k) =>
+                configRef.current![k as keyof Config] !== (e.data as Config)[k as keyof Config],
+            )
+          ) {
+            player.current?.stop();
+            speechSynthesis.cancel();
+          }
+          configRef.current = e.data as Config;
           setConfig(e.data as Config);
           if (!(e.data as Config).tts) {
             player.current?.stop();

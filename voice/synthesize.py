@@ -45,7 +45,7 @@ for line in sys.stdin:
                 else:
                     from piper import SynthesisConfig
                     engine.synthesize_wav(text, wav, syn_config=SynthesisConfig(length_scale=1/request.get('speed', 1), volume=request.get('volume', .8)))
-            result = {'audio': base64.b64encode(audio.getvalue()).decode('ascii')}
+            result = {'audio': base64.b64encode(audio.getvalue()).decode('ascii'), 'engine': kind, 'voice': request['voice']}
     except Exception as error:
         result = {'error': str(error)}
     print(json.dumps(result), flush=True)
