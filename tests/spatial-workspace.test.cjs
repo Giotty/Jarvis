@@ -132,7 +132,8 @@ test('modules stay bounded, support comparison and retain closed contents for re
     assert.equal(f.workspace.current.modules.filter((m) => m.state === 'active').length, 2);
     assert.ok(a.layout.x + a.layout.width <= b.layout.x);
     f.workspace.control({ action: 'pin', moduleId: c.id });
-    assert.equal(f.workspace.current.modules.filter((m) => m.state === 'active').length, 2);
+    assert.equal(f.workspace.current.modules.filter((m) => m.state === 'active').length, 3);
+    assert.ok(a.pinned && b.pinned && c.pinned);
     f.workspace.control({ action: 'close', moduleId: b.id });
     assert.equal(b.state, 'closed');
     assert.ok(b.panels.length);
@@ -206,6 +207,8 @@ test('saved sessions preserve images, sources and layouts across restart; rename
   }
 });
 test('sanitizer separates readable display formatting from speech across engines', () => {
+  assert.equal(sanitizeSpeech('I found this on NHL.com.'), 'I found this on NHL dot com.');
+  assert.equal(sanitizeSpeech('Read https://nhl.com/news/player now.'), 'Read now.');
   assert.equal(sanitizeSpeech('<script>unfinished code.'), '');
   assert.equal(sanitizeSpeech('{"unfinished":'), '');
   assert.equal(

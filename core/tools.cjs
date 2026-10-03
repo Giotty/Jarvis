@@ -8,6 +8,18 @@ const system = require('./windows-system.cjs');
 const text = z.string().min(1).max(8000),
   coord = z.number().int().min(-20000).max(20000);
 const definitions = {
+  set_response_mode: {
+    risk: 0,
+    schema: z
+      .object({
+        mode: z.enum(['SIMPLE', 'VISUAL_ASSIST', 'FULL_WORKSPACE']),
+        reason: z.string().max(1000).optional(),
+        imageQueries: z.array(z.string().trim().min(1).max(250)).max(2).default([]),
+      })
+      .strict(),
+    description:
+      'Choose presentation using reasoning about the user goal, not matching phrases. SIMPLE for quick answers or PC actions; VISUAL_ASSIST for one useful data/image card; FULL_WORKSPACE for explanations, teaching, research, comparisons and multi-entity topics. Supply relevant public image queries when portraits/products/locations/diagrams help; the host retrieves them without the user asking for pictures. Declare before research; can be called alongside independent reads.',
+  },
   workspace_list: {
     risk: 0,
     schema: z.object({ moduleId: z.string().uuid().optional() }).strict(),
@@ -22,21 +34,40 @@ const definitions = {
   },
   workspace_save: {
     risk: 1,
-    schema: z.object({}).strict(),
+    schema: require('./workspace.cjs').saveSchema,
     description:
-      'Save the full current briefing and layout locally in the app research library, including sources and image references.',
+      'Save current workspace, selected moduleIds or a groupId to the local library, optionally in folderId. Preserves sources, images, groups and layout. Saved copies survive workspace trash.',
   },
   workspace_library: {
     risk: 0,
-    schema: z.object({ query: z.string().max(120).default('') }).strict(),
+    schema: z
+      .object({ query: z.string().max(120).default(''), folderId: z.string().uuid().optional() })
+      .strict(),
     description:
       'List saved local research sessions by topic, ID and creation/last-open dates. Read before reopening a specific session.',
   },
   workspace_open: {
     risk: 0,
-    schema: z.object({ id: z.string().uuid() }).strict(),
+    schema: z
+      .object({ id: z.string().uuid().optional(), folderId: z.string().uuid().optional() })
+      .strict()
+      .refine((a) => !!a.id !== !!a.folderId),
     description:
       'Reopen an existing saved research session by its library ID. Does not re-research or automatically start speech.',
+  },
+  workspace_library_manage: {
+    risk: 1,
+    schema: z
+      .object({
+        action: z.enum(['create_folder', 'move']),
+        name: z.string().trim().min(1).max(90).optional(),
+        parentId: z.string().uuid().optional(),
+        id: z.string().uuid().optional(),
+        folderId: z.string().uuid().nullable().optional(),
+      })
+      .strict(),
+    description:
+      'Create a named virtual folder in the local JARVIS library, or move an existing saved entry to folderId (null for root). Does not modify user filesystem folders. List folders/entries first to resolve natural references.',
   },
   workspace_rename: {
     risk: 1,
@@ -859,13 +890,17 @@ class Executor {
         'summarize_page',
         'enable_tools',
       ].includes(a.tool) &&
-      !a.tool.startsWith('workspace_')
+      !a.tool.startsWith('workspace_') &&
+      a.tool !== 'set_response_mode'
     )
       return { mock: true, message: `Simulated ${a.tool}; no PC input or file changes.` };
     const p = a.args;
     if (['type_text', 'fill_search'].includes(a.tool)) p.allowMouseFocus = c.mouse === true;
     if (a.tool === 'type_text') p.allowSensitive = action.risk >= 2;
     switch (a.tool) {
+      case 'set_response_mode':
+        this.host.workspace.responseMode = p.mode;
+        return { success: true, verified: true, mode: p.mode, imageQueries: p.imageQueries };
       case 'workspace_list':
         return {
           success: true,
@@ -875,23 +910,38 @@ class Executor {
       case 'workspace_control':
         return this.host.workspace.control(p);
       case 'workspace_save':
-        return this.host.workspace.save();
+        return this.host.workspace.save(p);
       case 'workspace_library':
         return {
           success: true,
           verified: true,
-          entries: this.host.workspace.library.list(p.query),
+          entries: this.host.workspace.library.list(p.query, p.folderId),
+          folders: this.host.workspace.library.folders(),
         };
       case 'workspace_open':
-        return this.host.workspace.open(p.id);
+        return p.folderId
+          ? this.host.workspace.openFolder(p.folderId)
+          : this.host.workspace.open(p.id);
+      case 'workspace_library_manage':
+        return {
+          success: true,
+          verified: true,
+          entry:
+            p.action === 'create_folder'
+              ? this.host.workspace.library.createFolder(p.name, p.parentId || null)
+              : this.host.workspace.library.move(p.id, p.folderId || null),
+        };
       case 'workspace_rename':
         return {
           success: true,
           verified: true,
           entry: this.host.workspace.library.rename(p.id, p.topic),
         };
-      case 'workspace_delete':
-        return this.host.workspace.library.delete(p.id);
+      case 'workspace_delete': {
+        const result = this.host.workspace.library.delete(p.id);
+        this.host.workspace.forgetSaved(p.id);
+        return result;
+      }
       case 'enable_tools':
         return {
           success: true,

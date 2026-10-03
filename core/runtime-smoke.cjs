@@ -7,7 +7,7 @@ async function smoke(win, directory, host) {
     return { plugins: plugins.ok && plugins.data.length >= 10,
       schemas: plugins.ok && plugins.data.every(p => p.tools.every(t => t.inputSchema)),
       finiteBridge: !!api && typeof require === 'undefined',
-      workspaceBridge: typeof api.workspaceControl === 'function' && typeof api.workspaceComplete === 'function',
+      workspaceBridge: typeof api.workspaceControl === 'function' && typeof api.workspaceComplete === 'function' && typeof api.workspaceGesture === 'function' && typeof api.openResearchFolder === 'function',
       researchLibrary: (await api.researchLibrary()).ok,
       snapshot: snapshot.ok, reactor: !!document.querySelector('.reactor'),
       branding: document.body.innerText.includes('MAATOUK INDUSTRIES'),
@@ -89,16 +89,36 @@ async function smoke(win, directory, host) {
       const api=window.jarvis;let r=await api.workspaceControl({action:'compare',moduleId:${JSON.stringify(moduleId)},otherModuleId:${JSON.stringify(otherModuleId)}});const compared=r.ok;
       const saved=await api.saveResearch();if(!saved.ok)throw Error(saved.error);const key=saved.data.entry.id;
       const renamed=await api.renameResearch(key,'Renamed smoke fixture');const reopened=await api.openResearch(key);const paused=(await api.snapshot()).data.workspace.playback.state==='paused';
+      const session=(await api.snapshot()).data.workspace.id, token=crypto.randomUUID();
+      const grabbed=await api.workspaceGesture({sessionId:session,moduleId:${JSON.stringify(moduleId)},token,phase:'USER_GRABBED'});
+      const held=(await api.snapshot()).data.workspace.modules.find(m=>m.id===${JSON.stringify(moduleId)}).userLocked;
+      const released=await api.workspaceGesture({sessionId:session,moduleId:${JSON.stringify(moduleId)},token,phase:'RELEASE'});
+      const folder=await api.createResearchFolder('Smoke folder');const moved=await api.moveResearch(key,folder.data.id);const folderOpen=await api.openResearchFolder(folder.data.id);
       const first=await api.requestResearchDelete(key);await api.confirmResearchDelete(first.data.id,false);const denied=(await api.researchLibrary()).data.some(e=>e.id===key);
       const second=await api.requestResearchDelete(key);await api.cancelTask();const stopped=!(await api.confirmResearchDelete(second.data.id,true)).ok;
       const third=await api.requestResearchDelete(key);const deleted=(await api.confirmResearchDelete(third.data.id,true)).ok;const singleUse=!(await api.confirmResearchDelete(third.data.id,true)).ok;
-      return {rendered:!!document.querySelector('.spatial-workspace'),compared,saved:saved.ok,renamed:renamed.ok,reopened:reopened.ok,paused,denied,stopped,deleted,singleUse};
+      return {rendered:!!document.querySelector('.spatial-workspace'),compared,saved:saved.ok,renamed:renamed.ok,reopened:reopened.ok,paused,grabbed:grabbed.ok&&held,released:released.ok,folder:folder.ok&&moved.ok&&folderOpen.ok,denied,stopped,deleted,singleUse};
     })()`);
     for (const [name, valid] of Object.entries(workspaceChecks))
       if (!valid) throw Error('Workspace smoke failed: ' + name);
+    // IPC completion precedes React's paint; inspect the settled production frame.
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    const finalFrame = await win.webContents.executeJavaScript(`(() => {
+      const stage=document.querySelector('.spatial-stage').getBoundingClientRect();
+      const files=[...document.querySelectorAll('.floating-file')];
+      return {fileCount:files.length, noScroll:document.documentElement.scrollHeight===innerHeight&&document.documentElement.scrollWidth===innerWidth,
+        bounded:files.every(e=>{const r=e.getBoundingClientRect();return r.left>=stage.left-1&&r.top>=stage.top-1&&r.right<=stage.right+1&&r.bottom<=stage.bottom+1}),
+        files:files.map(e=>({id:e.dataset.moduleId,role:e.dataset.role,title:e.querySelector('h3').textContent}))};
+    })()`);
+    if (
+      finalFrame.fileCount !== host.workspace.current.modules.length ||
+      !finalFrame.bounded ||
+      !finalFrame.noScroll
+    )
+      throw Error('Settled workspace frame failed bounds/count/scroll verification.');
     fs.writeFileSync(
       path.join(directory, 'workspace-checks.json'),
-      JSON.stringify(workspaceChecks, null, 2),
+      JSON.stringify({ ...workspaceChecks, finalFrame }, null, 2),
     );
     fs.writeFileSync(
       path.join(directory, 'workspace.png'),

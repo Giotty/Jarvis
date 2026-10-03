@@ -52,6 +52,9 @@ const briefingSchema = z
       .array(
         z
           .object({
+            key: z.string().min(1).max(100).optional(),
+            groupId: z.string().min(1).max(100).optional(),
+            groupTitle: z.string().max(90).optional(),
             title: z.string().min(1).max(90),
             narration: z.string().max(900).default(''),
             segments: z.array(segmentSchema).max(16).default([]),
@@ -293,10 +296,11 @@ class BriefingEngine {
         for (const s of scene.segments || []) {
           const p = scene.panels[s.panel];
           if (
-            !p ||
-            s.item >= p.items.length ||
-            s.datum >= p.data.length ||
-            (s.imageId && !p.imageIds.includes(s.imageId))
+            !s.focusObjectId &&
+            (!p ||
+              s.item >= p.items.length ||
+              s.datum >= p.data.length ||
+              (s.imageId && !p.imageIds.includes(s.imageId)))
           )
             throw Error('Narration focus must reference real panel content.');
         }

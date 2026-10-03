@@ -1,4 +1,5 @@
 const base = [
+  'set_response_mode',
   'enable_tools',
   'workspace_list',
   'analyze_screen',
@@ -25,6 +26,7 @@ const base = [
 ];
 const families = {
   workspace: [
+    'workspace_library_manage',
     'workspace_control',
     'workspace_save',
     'workspace_library',

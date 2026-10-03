@@ -1,15 +1,32 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ResearchPanel } from './ResearchContent';
+import { ResearchPanel, AttributedImage } from './ResearchContent';
 import {
   Briefing,
   Workspace,
   WorkspaceModule,
   WorkspaceControl,
   ResearchEntry,
+  ResearchFolder,
   Confirmation,
   unwrap,
 } from './types';
 
+type Gesture = {
+  id: string;
+  token: string;
+  sessionId: string;
+  mode: 'move' | 'resize' | 'hold';
+  phase: string;
+  startX: number;
+  startY: number;
+  layout: WorkspaceModule['layout'];
+  next: WorkspaceModule['layout'];
+  snapshot: WorkspaceModule;
+  element: HTMLElement;
+  capture: Element;
+  pointer: number;
+  changed: boolean;
+};
 export const WorkspaceView = memo(function WorkspaceView({
   workspace,
   onNarrate,
@@ -29,24 +46,16 @@ export const WorkspaceView = memo(function WorkspaceView({
 }) {
   const stage = useRef<HTMLDivElement>(null),
     frame = useRef(0),
-    drag = useRef<{
-      id: string;
-      mode: 'move' | 'resize';
-      startX: number;
-      startY: number;
-      layout: WorkspaceModule['layout'];
-      next: WorkspaceModule['layout'];
-    } | null>(null);
+    drag = useRef<Gesture | null>(null);
   const [size, setSize] = useState({ width: 1000, height: 400 }),
-    [preview, setPreview] = useState<{ id: string; layout: WorkspaceModule['layout'] } | null>(
-      null,
-    ),
-    [dockPage, setDockPage] = useState(0),
+    [held, setHeld] = useState<WorkspaceModule | null>(null),
     [panelPages, setPanelPages] = useState<Record<string, number>>({}),
-    [message, setMessage] = useState('');
+    [message, setMessage] = useState(''),
+    [folders, setFolders] = useState<ResearchFolder[]>([]),
+    [folderId, setFolderId] = useState('');
   const control = useCallback(
-    (input: WorkspaceControl) => {
-      void unwrap(window.jarvis!.workspaceControl(input)).catch((e) => onError(String(e)));
+    (a: WorkspaceControl) => {
+      void unwrap(window.jarvis!.workspaceControl(a)).catch((e) => onError(String(e)));
     },
     [onError],
   );
@@ -61,13 +70,52 @@ export const WorkspaceView = memo(function WorkspaceView({
     observer.observe(stage.current);
     return () => observer.disconnect();
   }, []);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const refresh = () =>
+      void unwrap(window.jarvis!.researchFolders())
+        .then(setFolders)
+        .catch((e) => onError(String(e)));
+    refresh();
+    return window.jarvis!.on((e) => {
+      if (e.type === 'research-library') refresh();
+    });
+  }, [onError]);
+  const release = useCallback(
+    (cancel = false) => {
+      const d = drag.current;
+      if (!d) return;
+      drag.current = null;
+      cancelAnimationFrame(frame.current);
+      frame.current = 0;
+      if (d.capture.hasPointerCapture(d.pointer)) d.capture.releasePointerCapture(d.pointer);
+      const next = cancel ? d.layout : d.next;
+      d.element.style.transform = `translate3d(${next.x * size.width}px,${next.y * size.height}px,0)`;
+      void unwrap(
+        window.jarvis!.workspaceGesture({
+          sessionId: d.sessionId,
+          moduleId: d.id,
+          token: d.token,
+          phase: 'RELEASE',
+          ...(!cancel && d.changed ? { layout: next } : {}),
+        }),
+      )
+        .catch((e) => onError(String(e)))
+        .finally(() => setHeld(null));
+    },
+    [onError, size.width, size.height],
+  );
+  const releaseRef = useRef(release);
+  releaseRef.current = release;
+  useEffect(() => {
+    const blur = () => releaseRef.current(true);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('blur', blur);
+      releaseRef.current(true);
       cancelAnimationFrame(frame.current);
       onInterrupt();
-    },
-    [onInterrupt],
-  );
+    };
+  }, [onInterrupt]);
   useEffect(() => {
     if (p.state !== 'playing' || !segment) return;
     const token = {
@@ -85,7 +133,6 @@ export const WorkspaceView = memo(function WorkspaceView({
       valid = false;
       onInterrupt();
     };
-    // Appending new modules must not restart the currently playing segment.
   }, [
     workspace.id,
     p.state,
@@ -97,27 +144,57 @@ export const WorkspaceView = memo(function WorkspaceView({
     onInterrupt,
     onError,
   ]);
-  const bounds = (layout: WorkspaceModule['layout']) => {
-    const width = Math.min(1, Math.max(layout.width, Math.min(1, 320 / size.width))),
-      height = Math.min(1, Math.max(layout.height, Math.min(1, 310 / size.height)));
-    return {
-      width,
-      height,
-      x: Math.max(0, Math.min(layout.x, 1 - width)),
-      y: Math.max(0, Math.min(layout.y, 1 - height)),
-    };
-  };
-  const begin = (e: React.PointerEvent, m: WorkspaceModule, mode: 'move' | 'resize') => {
-    if (e.button !== 0 || (mode === 'move' && (e.target as HTMLElement).closest('button'))) return;
+  const bounds = (l: WorkspaceModule['layout']) => ({
+    width: Math.min(1, Math.max(0.12, l.width)),
+    height: Math.min(1, Math.max(0.16, l.height)),
+    x: Math.max(0, Math.min(l.x, 1 - Math.min(1, Math.max(0.12, l.width)))),
+    y: Math.max(0, Math.min(l.y, 1 - Math.min(1, Math.max(0.16, l.height)))),
+  });
+  const begin = (e: React.PointerEvent, m: WorkspaceModule, mode: Gesture['mode']) => {
+    if (
+      e.button !== 0 ||
+      drag.current ||
+      (e.target as HTMLElement).closest('button,a,input,select')
+    )
+      return;
     e.preventDefault();
+    e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    control({ action: 'pause' });
-    const layout = bounds(m.layout);
-    drag.current = { id: m.id, mode, startX: e.clientX, startY: e.clientY, layout, next: layout };
+    const layout = bounds(m.layout),
+      element = (e.currentTarget as HTMLElement).closest('.research-module') as HTMLElement,
+      token = crypto.randomUUID();
+    drag.current = {
+      id: m.id,
+      token,
+      sessionId: workspace.id,
+      mode,
+      phase: mode === 'resize' ? 'USER_RESIZING' : 'USER_GRABBED',
+      startX: e.clientX,
+      startY: e.clientY,
+      layout,
+      next: layout,
+      snapshot: m,
+      element,
+      capture: e.currentTarget,
+      pointer: e.pointerId,
+      changed: false,
+    };
+    setHeld(m);
+    void unwrap(
+      window.jarvis!.workspaceGesture({
+        sessionId: workspace.id,
+        moduleId: m.id,
+        token,
+        phase: mode === 'resize' ? 'USER_RESIZING' : 'USER_GRABBED',
+      }),
+    ).catch((e) => {
+      onError(String(e));
+      releaseRef.current(true);
+    });
   };
   const move = (e: React.PointerEvent) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d || d.mode === 'hold') return;
     const dx = (e.clientX - d.startX) / size.width,
       dy = (e.clientY - d.startY) / size.height;
     d.next = bounds(
@@ -125,29 +202,40 @@ export const WorkspaceView = memo(function WorkspaceView({
         ? { ...d.layout, x: d.layout.x + dx, y: d.layout.y + dy }
         : { ...d.layout, width: d.layout.width + dx, height: d.layout.height + dy },
     );
+    d.changed = true;
+    if (d.phase === 'USER_GRABBED') {
+      d.phase = 'USER_DRAGGING';
+      void unwrap(
+        window.jarvis!.workspaceGesture({
+          sessionId: d.sessionId,
+          moduleId: d.id,
+          token: d.token,
+          phase: 'USER_DRAGGING',
+        }),
+      ).catch((e) => onError(String(e)));
+    }
     if (!frame.current)
       frame.current = requestAnimationFrame(() => {
         frame.current = 0;
         const d = drag.current;
-        if (d) setPreview({ id: d.id, layout: d.next });
+        if (!d) return;
+        d.element.style.transform = `translate3d(${d.next.x * size.width}px,${d.next.y * size.height}px,0)`;
+        if (d.mode === 'resize') {
+          d.element.style.width = d.next.width * size.width + 'px';
+          d.element.style.height = d.next.height * size.height + 'px';
+        }
       });
   };
-  const end = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d) return;
-    drag.current = null;
-    cancelAnimationFrame(frame.current);
-    frame.current = 0;
-    setPreview(null);
-    if (e.currentTarget.hasPointerCapture(e.pointerId))
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    control({
-      action: d.mode,
-      moduleId: d.id,
-      ...(d.mode === 'move'
-        ? { x: d.next.x, y: d.next.y }
-        : { width: d.next.width, height: d.next.height }),
-    });
+  const save = (moduleIds?: string[], groupId?: string) => {
+    void unwrap(
+      window.jarvis!.saveResearch({
+        ...(moduleIds ? { moduleIds } : {}),
+        ...(groupId ? { groupId } : {}),
+        folderId: folderId || null,
+      }),
+    )
+      .then(() => setMessage('Saved locally. Workspace trash will keep the saved copy.'))
+      .catch((e) => onError(String(e)));
   };
   const briefing: Briefing = {
     id: workspace.id,
@@ -158,37 +246,34 @@ export const WorkspaceView = memo(function WorkspaceView({
     scenes: [],
     sources: workspace.sources,
   };
-  const active = workspace.modules.filter((m) => m.state === 'active').slice(-2),
-    dock = workspace.modules.filter((m) => m.state !== 'active');
-  const slots = size.width < 1500 ? 5 : 7,
-    totalPages = Math.max(1, Math.ceil(dock.length / slots));
-  const selectedPage = Math.min(dockPage, totalPages - 1);
-  const companion =
-    active.length === 1
-      ? active[0].panels.find((panel) => panel.type === 'images' && panel.imageIds?.length)
-      : null;
+  const visible = workspace.modules.filter((m) => m.state !== 'closed');
   return (
     <section
-      className={'spatial-workspace' + ((gpuLoad || 0) > 80 ? ' load-aware' : '')}
+      className={'spatial-workspace memory-wall' + ((gpuLoad || 0) > 80 ? ' load-aware' : '')}
       aria-label="Spatial research workspace"
     >
       <header className="workspace-bar">
         <div>
           <span className="eyebrow">
-            SPATIAL RESEARCH / {workspace.researching ? 'GATHERING SOURCES' : 'LOCAL WORKSPACE'}
+            {workspace.responseMode || 'FULL_WORKSPACE'} /{' '}
+            {workspace.researching ? 'GATHERING SOURCES' : 'VISUAL MEMORY'}
           </span>
           <h2 title={workspace.topic}>{workspace.topic}</h2>
         </div>
         <div className="workspace-actions">
-          <button
-            onClick={() =>
-              void unwrap(window.jarvis!.saveResearch())
-                .then(() => setMessage('Briefing saved locally.'))
-                .catch((e) => onError(String(e)))
-            }
+          <select
+            aria-label="Save destination folder"
+            value={folderId}
+            onChange={(e) => setFolderId(e.target.value)}
           >
-            SAVE BRIEFING
-          </button>
+            <option value="">Library root</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+          <button onClick={() => save()}>SAVE ALL</button>
           <button onClick={onLibrary}>LIBRARY</button>
           <button
             aria-label="Hide research workspace"
@@ -204,136 +289,210 @@ export const WorkspaceView = memo(function WorkspaceView({
       <div className="spatial-stage" ref={stage}>
         <svg
           className="workspace-data-links"
-          viewBox="0 0 1000 400"
-          preserveAspectRatio="none"
+          viewBox={`0 0 ${size.width} ${size.height}`}
           aria-hidden="true"
         >
-          <path d="M500 200C410 150 380 80 280 80M500 200C590 140 650 300 760 300" />
+          {visible
+            .filter((m) => m.visualRole === 'PRIMARY' || m.visualRole === 'SECONDARY')
+            .slice(0, 2)
+            .map((m) => (
+              <path
+                key={m.id}
+                d={`M${size.width * 0.5} ${size.height * 0.5}L${size.width * (m.layout.x + m.layout.width * 0.5)} ${size.height * (m.layout.y + m.layout.height * 0.5)}`}
+              />
+            ))}
         </svg>
-        {!active.length && (
-          <div className="workspace-complete">
-            <b>{p.state === 'waiting' ? 'RESEARCH CONTINUES' : 'BRIEFING STAGED'}</b>
-            <p>
-              {p.state === 'waiting'
-                ? 'The next module will arrive when its sources are ready.'
-                : 'Everything remains in the dock. Reopen a section, compare modules or save the session.'}
-            </p>
-          </div>
-        )}
-        {active.map((m) => {
-          const l = bounds(preview?.id === m.id ? preview.layout : m.layout),
-            focus = m.id === p.moduleId && p.state === 'playing' ? segment : m.focus;
-          const page = Math.min(focus?.panel ?? panelPages[m.id] ?? 0, m.panels.length - 1);
+        {visible.map((original) => {
+          const m = held?.id === original.id ? held : original,
+            l = bounds(m.layout),
+            locked = held?.id === m.id || m.userLocked,
+            role = locked ? 'USER_LOCKED' : m.visualRole || 'CONTEXT';
+          const focusId = segment?.focusObjectId || p.moduleId,
+            focus = m.id === focusId && p.state === 'playing' ? segment : m.focus;
+          const page = Math.min(focus?.panel ?? panelPages[m.id] ?? 0, m.panels.length - 1),
+            compact = l.width * size.width < 280 || l.height * size.height < 215;
+          const source = workspace.sources.find((s) => m.panels[page].sourceIds.includes(s.id)),
+            image = m.panels
+              .flatMap((panel) => panel.imageIds || [])
+              .map((id) => ({
+                id,
+                title:
+                  workspace.sources.flatMap((s) => s.images).find((i) => i.id === id)?.title ||
+                  m.title,
+              }))[0];
           return (
             <article
+              key={m.id}
               className={
-                'research-module' +
-                (p.moduleId === m.id ? ' module-dominant' : '') +
+                'research-module floating-file role-' +
+                role +
+                (compact ? ' file-compact' : '') +
                 (m.pinned ? ' module-pinned' : '')
               }
               data-module-id={m.id}
-              key={m.id}
+              data-role={role}
               style={{
-                left: l.x * 100 + '%',
-                top: l.y * 100 + '%',
-                width: l.width * 100 + '%',
-                height: l.height * 100 + '%',
+                left: 0,
+                top: 0,
+                transform: `translate3d(${l.x * size.width}px,${l.y * size.height}px,0)`,
+                width: l.width * size.width,
+                height: l.height * size.height,
+                zIndex: locked ? 100 : m.zIndex || 20,
               }}
+              onPointerDown={(e) => begin(e, m, 'hold')}
+              onPointerMove={move}
+              onPointerUp={() => release()}
+              onPointerCancel={() => release(true)}
+              onLostPointerCapture={() => release()}
             >
               <header
                 className="module-grip"
-                tabIndex={0}
                 role="button"
+                tabIndex={0}
                 aria-label={'Move ' + m.title}
                 onPointerDown={(e) => begin(e, m, 'move')}
-                onPointerMove={move}
-                onPointerUp={end}
-                onPointerCancel={end}
                 onDoubleClick={() => control({ action: 'expand', moduleId: m.id })}
                 onKeyDown={(e) => {
-                  const delta = {
+                  const delta: Record<string, number[]> = {
                     ArrowLeft: [-0.03, 0],
                     ArrowRight: [0.03, 0],
                     ArrowUp: [0, -0.03],
                     ArrowDown: [0, 0.03],
-                  }[e.key];
-                  if (delta) {
+                  };
+                  if (delta[e.key]) {
                     e.preventDefault();
                     control({
                       action: 'move',
                       moduleId: m.id,
-                      x: Math.max(0, Math.min(1, l.x + delta[0])),
-                      y: Math.max(0, Math.min(1, l.y + delta[1])),
+                      x: Math.max(0, Math.min(1, l.x + delta[e.key][0])),
+                      y: Math.max(0, Math.min(1, l.y + delta[e.key][1])),
                     });
                   }
                 }}
               >
                 <span className="module-index">
-                  {String(workspace.modules.indexOf(m) + 1).padStart(2, '0')}
+                  {String(workspace.modules.indexOf(original) + 1).padStart(2, '0')}
                 </span>
                 <h3 title={m.title}>{m.title}</h3>
-                <div>
-                  <button
-                    aria-label={'Pin ' + m.title}
-                    aria-pressed={m.pinned}
-                    onClick={() => control({ action: 'pin', moduleId: m.id })}
-                  >
-                    ⌖
-                  </button>
-                  <button
-                    aria-label={'Expand ' + m.title}
-                    onClick={() => control({ action: 'expand', moduleId: m.id })}
-                  >
-                    ⛶
-                  </button>
-                  <button
-                    aria-label={'Minimize ' + m.title}
-                    onClick={() => control({ action: 'minimize', moduleId: m.id })}
-                  >
-                    −
-                  </button>
-                  <button
-                    aria-label={'Close ' + m.title}
-                    onClick={() => control({ action: 'close', moduleId: m.id })}
-                  >
-                    ×
-                  </button>
-                </div>
+                <span className="file-role">{role}</span>
               </header>
+              <div className="file-tools">
+                <button
+                  aria-label={'Pin ' + m.title}
+                  aria-pressed={m.pinned}
+                  onClick={() => control({ action: 'pin', moduleId: m.id })}
+                >
+                  ⌖
+                </button>
+                <button
+                  aria-label={'Save ' + m.title}
+                  title="Save file"
+                  onClick={() => save([m.id])}
+                >
+                  ▣
+                </button>
+                <button
+                  aria-label={'Expand ' + m.title}
+                  onClick={() => control({ action: 'expand', moduleId: m.id })}
+                >
+                  ⛶
+                </button>
+                <button
+                  aria-label={'Park ' + m.title}
+                  onClick={() => control({ action: 'park', moduleId: m.id })}
+                >
+                  −
+                </button>
+                <button
+                  aria-label={'Trash ' + m.title}
+                  title="Remove from workspace; keep saved copy"
+                  onClick={() => control({ action: 'trash', moduleId: m.id })}
+                >
+                  ×
+                </button>
+                {m.groupId && (
+                  <>
+                    <button
+                      aria-label={'Collapse ' + m.groupTitle}
+                      onClick={() =>
+                        control({
+                          action: m.groupCollapsed ? 'expand_group' : 'collapse_group',
+                          groupId: m.groupId!,
+                        })
+                      }
+                    >
+                      ≡
+                    </button>
+                    <button
+                      aria-label={'Save group ' + m.groupTitle}
+                      onClick={() => save(undefined, m.groupId!)}
+                    >
+                      G
+                    </button>
+                  </>
+                )}
+                <span>
+                  {m.savedId
+                    ? 'LIBRARY_SAVED'
+                    : m.pinned
+                      ? 'PINNED'
+                      : m.userPositioned
+                        ? 'USER PLACED'
+                        : m.groupTitle || 'RESEARCH FILE'}
+                </span>
+              </div>
               <div className="module-content">
-                <ResearchPanel
-                  key={page}
-                  panel={m.panels[page]}
-                  briefing={briefing}
-                  narrated={p.state === 'playing' && p.moduleId === m.id}
-                  highlight={focus}
-                />
+                {compact ? (
+                  <div className="context-preview">
+                    {image && role !== 'STACKED' ? (
+                      <AttributedImage id={image.id} title={image.title} />
+                    ) : null}
+                    <p>
+                      {m.panels[page].body ||
+                        m.panels[page].items?.map((i) => i.label + ': ' + i.value).join(' · ') ||
+                        m.panels[page].title}
+                    </p>
+                    <button
+                      aria-label={'Focus ' + m.title}
+                      onClick={() => control({ action: 'focus', moduleId: m.id })}
+                    >
+                      BRING FORWARD
+                    </button>
+                  </div>
+                ) : (
+                  <ResearchPanel
+                    key={page}
+                    panel={m.panels[page]}
+                    briefing={briefing}
+                    narrated={p.state === 'playing' && focusId === m.id}
+                    highlight={focus}
+                  />
+                )}
               </div>
               <footer className="module-panel-tabs">
-                {m.panels.map((panel, i) => (
-                  <button
-                    key={i}
-                    title={panel.title}
-                    aria-label={m.title + ': ' + panel.title}
-                    aria-pressed={page === i}
-                    onClick={() => {
-                      control({ action: 'pause' });
-                      setPanelPages((v) => ({ ...v, [m.id]: i }));
-                      control({ action: 'highlight', moduleId: m.id, panel: i });
-                    }}
-                  >
-                    {i + 1} / {panel.type.toUpperCase()}
-                  </button>
-                ))}
+                <small title={source?.url}>
+                  {source ? new URL(source.url).hostname : 'SOURCED FILE'}
+                </small>
+                {!compact &&
+                  m.panels.map((panel, i) => (
+                    <button
+                      key={i}
+                      title={panel.title}
+                      aria-pressed={page === i}
+                      onClick={() => {
+                        setPanelPages((v) => ({ ...v, [m.id]: i }));
+                        control({ action: 'highlight', moduleId: m.id, panel: i });
+                      }}
+                    >
+                      {i + 1}/{panel.type.toUpperCase()}
+                    </button>
+                  ))}
                 <span
                   className="module-resize"
                   role="button"
                   tabIndex={0}
                   aria-label={'Resize ' + m.title}
                   onPointerDown={(e) => begin(e, m, 'resize')}
-                  onPointerMove={move}
-                  onPointerUp={end}
-                  onPointerCancel={end}
                   onKeyDown={(e) => {
                     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
                       e.preventDefault();
@@ -343,7 +502,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                         width: Math.min(
                           1,
                           Math.max(
-                            0.25,
+                            0.12,
                             l.width +
                               (e.key === 'ArrowRight' ? 0.03 : e.key === 'ArrowLeft' ? -0.03 : 0),
                           ),
@@ -351,7 +510,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                         height: Math.min(
                           1,
                           Math.max(
-                            0.5,
+                            0.16,
                             l.height +
                               (e.key === 'ArrowDown' ? 0.03 : e.key === 'ArrowUp' ? -0.03 : 0),
                           ),
@@ -366,28 +525,36 @@ export const WorkspaceView = memo(function WorkspaceView({
             </article>
           );
         })}
-        {companion && (
-          <aside
-            className={'subject-projection' + (active[0].layout.x > 0.3 ? ' projection-left' : '')}
-          >
-            <span className="eyebrow">ATTRIBUTED SUBJECT / HOLOGRAPHIC PLANE</span>
-            <ResearchPanel
-              panel={companion}
-              briefing={briefing}
-              narrated={segment?.imageId !== undefined}
-            />
-          </aside>
+        {workspace.pendingFocus && (
+          <div className="staging-indicator">USER HAS THE FILE · NEXT VISUALS STAGED</div>
         )}
       </div>
       <div className="presentation-transport">
         <span className={'playback-light state-' + p.state} />
         <b>{p.state.toUpperCase()}</b>
-        <button onClick={() => control({ action: p.state === 'playing' ? 'pause' : 'resume' })}>
+        <button
+          disabled={!workspace.modules.length}
+          onClick={() => control({ action: p.state === 'playing' ? 'pause' : 'resume' })}
+        >
           {p.state === 'playing' ? 'PAUSE' : 'RESUME'}
         </button>
-        <button onClick={() => control({ action: 'previous' })}>PREVIOUS</button>
-        <button onClick={() => control({ action: 'next' })}>NEXT</button>
-        <button onClick={() => control({ action: 'repeat' })}>REPEAT SECTION</button>
+        <button
+          disabled={workspace.modules.findIndex((m) => m.id === p.moduleId) <= 0}
+          onClick={() => control({ action: 'previous' })}
+        >
+          PREVIOUS
+        </button>
+        <button
+          disabled={
+            workspace.modules.findIndex((m) => m.id === p.moduleId) >= workspace.modules.length - 1
+          }
+          onClick={() => control({ action: 'next' })}
+        >
+          NEXT
+        </button>
+        <button disabled={!workspace.modules.length} onClick={() => control({ action: 'repeat' })}>
+          REPEAT
+        </button>
         <button
           onClick={() => {
             control({ action: 'stop' });
@@ -397,52 +564,8 @@ export const WorkspaceView = memo(function WorkspaceView({
           STOP
         </button>
         <span role="status">
-          {message || 'Narration controls focus automatically. Drag a header to rearrange.'}
+          {message || 'Hold any file to lock it. Narration continues. Pin to keep its place.'}
         </span>
-      </div>
-      <div className="completed-dock">
-        <div className="dock-label">
-          <span>BRIEFING ARCHIVE</span>
-          <b>{dock.length} MODULES</b>
-        </div>
-        <button
-          aria-label="Previous dock modules"
-          disabled={!selectedPage}
-          onClick={() => setDockPage((p) => p - 1)}
-        >
-          ←
-        </button>
-        <div className="dock-thumbnails">
-          {dock.slice(selectedPage * slots, (selectedPage + 1) * slots).map((m) => (
-            <div className={'docked-module ' + m.state} key={m.id}>
-              <button
-                title={m.title}
-                aria-label={'Reopen ' + m.title}
-                onClick={() => control({ action: 'focus', moduleId: m.id })}
-              >
-                <span>{m.completed ? 'ARCHIVED' : m.state === 'closed' ? 'CLOSED' : 'READY'}</span>
-                <b>{m.title}</b>
-                <i className="thumbnail-trace" />
-              </button>
-              <button
-                aria-label={'Compare ' + m.title}
-                disabled={!active.length || active[0].id === m.id}
-                onClick={() =>
-                  control({ action: 'compare', moduleId: active[0].id, otherModuleId: m.id })
-                }
-              >
-                ⇄
-              </button>
-            </div>
-          ))}
-        </div>
-        <button
-          aria-label="Next dock modules"
-          disabled={selectedPage === totalPages - 1}
-          onClick={() => setDockPage((p) => p + 1)}
-        >
-          →
-        </button>
       </div>
     </section>
   );
@@ -458,40 +581,98 @@ export function ResearchLibraryView({
   onError: (s: string) => void;
 }) {
   const [entries, setEntries] = useState<ResearchEntry[]>([]),
-    [page, setPage] = useState(0),
+    [folders, setFolders] = useState<ResearchFolder[]>([]),
+    [folder, setFolder] = useState(''),
     [query, setQuery] = useState(''),
+    [page, setPage] = useState(0),
+    [folderName, setFolderName] = useState(''),
     [rename, setRename] = useState<ResearchEntry | null>(null),
     [topic, setTopic] = useState('');
   const refresh = useCallback(() => {
-    void unwrap(window.jarvis!.researchLibrary())
-      .then(setEntries)
+    void Promise.all([
+      unwrap(window.jarvis!.researchLibrary()),
+      unwrap(window.jarvis!.researchFolders()),
+    ])
+      .then(([e, f]) => {
+        setEntries(e);
+        setFolders(f);
+      })
       .catch((e) => onError(String(e)));
   }, [onError]);
   useEffect(() => {
     refresh();
-    return window.jarvis?.on((e) => {
+    return window.jarvis!.on((e) => {
       if (e.type === 'research-library') refresh();
     });
   }, [refresh]);
-  const filtered = entries.filter((e) => e.topic.toLowerCase().includes(query.toLowerCase())),
-    pages = Math.max(1, Math.ceil(filtered.length / 3)),
+  const filtered = entries.filter(
+      (e) =>
+        e.topic.toLowerCase().includes(query.toLowerCase()) && (!folder || e.folderId === folder),
+    ),
+    pages = Math.max(1, Math.ceil(filtered.length / 4)),
     selected = Math.min(page, pages - 1);
   return (
-    <section className="research-library" aria-label="Saved research library">
+    <section className="research-library" aria-label="Local research library">
       <header>
         <div>
-          <span className="eyebrow">MAATOUK / LOCAL RESEARCH</span>
-          <h2>Research library</h2>
+          <span className="eyebrow">LOCAL FILES / GROUPS / WORKSPACES</span>
+          <h2>JARVIS LIBRARY</h2>
         </div>
-        <button aria-label="Close research library" onClick={onClose}>
+        <button aria-label="Close library" onClick={onClose}>
           ×
         </button>
       </header>
+      <div className="library-folder-controls">
+        <select
+          aria-label="Library folder"
+          value={folder}
+          onChange={(e) => {
+            setFolder(e.target.value);
+            setPage(0);
+          }}
+        >
+          <option value="">All folders</option>
+          {folders.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+        <button
+          disabled={!folder}
+          onClick={() =>
+            void unwrap(window.jarvis!.openResearchFolder(folder))
+              .then(onClose)
+              .catch((e) => onError(String(e)))
+          }
+        >
+          OPEN AS FLOATING FILES
+        </button>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void unwrap(window.jarvis!.createResearchFolder(folderName, folder || undefined))
+              .then(() => {
+                setFolderName('');
+                refresh();
+              })
+              .catch((e) => onError(String(e)));
+          }}
+        >
+          <input
+            aria-label="New folder name"
+            value={folderName}
+            maxLength={90}
+            onChange={(e) => setFolderName(e.target.value)}
+            placeholder="New folder"
+          />
+          <button disabled={!folderName.trim()}>CREATE</button>
+        </form>
+      </div>
       <input
-        aria-label="Find saved research"
-        placeholder="Find a topic…"
+        aria-label="Search saved research"
+        placeholder="Search files, groups and workspaces"
         value={query}
-        maxLength={120}
         onChange={(e) => {
           setQuery(e.target.value);
           setPage(0);
@@ -509,31 +690,27 @@ export function ResearchLibraryView({
               .catch((e) => onError(String(e)));
           }}
         >
-          <h3>Rename saved briefing</h3>
+          <h3>Rename saved file</h3>
           <input
-            aria-label="New briefing name"
-            maxLength={120}
+            aria-label="Saved research title"
             value={topic}
+            maxLength={120}
             onChange={(e) => setTopic(e.target.value)}
           />
-          <button disabled={!topic.trim()}>SAVE NAME</button>
+          <button>SAVE NAME</button>
           <button type="button" onClick={() => setRename(null)}>
             CANCEL
           </button>
         </form>
       ) : (
         <div className="library-entries">
-          {filtered.slice(selected * 3, selected * 3 + 3).map((e) => (
+          {filtered.slice(selected * 4, selected * 4 + 4).map((e) => (
             <article key={e.id}>
-              <span>
-                {new Date(e.created).toLocaleDateString()} / {e.moduleCount} MODULES
+              <span className="eyebrow">
+                {e.kind?.toUpperCase() || 'WORKSPACE'} / {e.moduleCount} FILES /{' '}
+                {e.folderId ? folders.find((f) => f.id === e.folderId)?.name : 'ROOT'}
               </span>
               <h3>{e.topic}</h3>
-              <small>
-                {e.lastOpened
-                  ? 'Last opened ' + new Date(e.lastOpened).toLocaleString()
-                  : 'Not reopened yet'}
-              </small>
               <div>
                 <button
                   onClick={() =>
@@ -542,7 +719,7 @@ export function ResearchLibraryView({
                       .catch((err) => onError(String(err)))
                   }
                 >
-                  OPEN WORKSPACE
+                  OPEN FLOATING FILES
                 </button>
                 <button
                   onClick={() => {
@@ -552,6 +729,22 @@ export function ResearchLibraryView({
                 >
                   RENAME
                 </button>
+                <select
+                  aria-label={'Move ' + e.topic + ' to folder'}
+                  value={e.folderId || ''}
+                  onChange={(ev) =>
+                    void unwrap(window.jarvis!.moveResearch(e.id, ev.target.value || null))
+                      .then(refresh)
+                      .catch((err) => onError(String(err)))
+                  }
+                >
+                  <option value="">Root</option>
+                  {folders.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
                 <button
                   onClick={() =>
                     void unwrap(window.jarvis!.requestResearchDelete(e.id))
@@ -564,7 +757,7 @@ export function ResearchLibraryView({
               </div>
             </article>
           ))}
-          {!filtered.length && <p>Save a briefing to keep its modules, sources and layout here.</p>}
+          {!filtered.length && <p>Save a file or group from the workspace to keep it here.</p>}
         </div>
       )}
       <footer>
@@ -572,7 +765,7 @@ export function ResearchLibraryView({
           ←
         </button>
         <span>
-          {selected + 1} / {pages}
+          {selected + 1}/{pages}
         </span>
         <button disabled={selected === pages - 1} onClick={() => setPage((p) => p + 1)}>
           →

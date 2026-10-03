@@ -1,10 +1,10 @@
 # JARVIS — MAATOUK INDUSTRIES
 
-**0.4.1** adds research checkpoints and attributed picture previews so repeated searches cannot consume the whole task without a presentation. The spatial workspace supports automatic narration focus, movable modules, comparison and a local saved library. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
+**0.5.0** adds a persistent floating research wall, model-selected response modes, narration choreography, user grab locks, staged files, grouping, and a local file/group/workspace library with folders. The circular Maatouk HUD remains unchanged. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
 
 ## Launch
 
-Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.4.1.exe`.
+Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.5.0.exe`.
 
 The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **Kokoro bm_george** British male speech. Piper/Windows voices remain supported. Windows currently exposes **no recording endpoint**: connect/enable a microphone and choose it in radial VOICE settings.
 
@@ -43,9 +43,9 @@ Computer file scope searches accessible local drives/deep/hidden folders in boun
 
 Background public search/pages, weather, YouTube metadata/feeds and page-associated images feed a source registry without opening Google. Explicit open/watch/interact requests can still use browser tools.
 
-The model presents verified sections progressively as spatial modules: text, metrics, comparisons, timelines, charts, radial percentages and sources/images. Move, resize, expand, pin, dock or compare modules; summaries/items have page controls. SAVE BRIEFING preserves content, layout and image references in the app data Research folder. The compact RESEARCH LIBRARY control reopens, renames or deletes sessions with confirmation. Code/HTML is rejected; chart numbers must occur in cited evidence. Images use registered IDs, validated public addresses/redirects, DNS-pinned fetching, lazy bounded caching, pseudo-3D planes and unavailable placeholders. Image bytes remain in memory. Video/map panels are previews/text, not embedded playback/maps.
+The model presents verified sections progressively as spatial modules: text, metrics, comparisons, timelines, charts, radial percentages and sources/images. Move, resize, expand, pin, dock or compare modules; summaries/items have page controls. Per-file SAVE, group SAVE and SAVE ALL preserve content, layout, sources and image references in the local Research library. Create virtual folders, move saved entries between folders and reopen a folder as floating files. Trashing a workspace file preserves its saved copy; deleting saved entries retains confirmation. Code/HTML is rejected; chart numbers must occur in cited evidence. Images use registered IDs, validated public addresses/redirects, DNS-pinned fetching, lazy bounded caching, pseudo-3D planes and unavailable placeholders. Image bytes remain in memory. Video/map panels are previews/text, not embedded playback/maps.
 
-Narration automatically highlights content, advances sections and retains completed modules in the dock after actual audio playback. PAUSE/RESUME/PREVIOUS/NEXT/REPEAT/STOP remain optional. Interruptions invalidate callbacks. A shared sanitizer removes spoken URLs, formatting, emojis and source IDs while keeping visual citations. Spoken stop/cancel/wait/never-mind cancels tasks; ordinary speech interruption stops playback while approvals remain explicit.
+Narration completion advances the focused file and keeps older files visible in context or stacks. Pointer hold/drag/resize locks the selected file without pausing speech; incoming visuals stage until release and reconcile only the latest layout. Pins and manual placement prevent automatic rearrangement. PAUSE/RESUME/PREVIOUS/NEXT/REPEAT/STOP remain optional. Interruptions invalidate callbacks. A shared sanitizer removes spoken URLs, formatting, emojis and source IDs while keeping visual citations. Spoken stop/cancel/wait/never-mind cancels tasks; ordinary speech interruption stops playback while approvals remain explicit.
 
 Screen OFF/MANUAL/WHILE AWAKE/CONTINUOUS modes retain adaptive capture, hashes/differences, foreground context and throttled local vision. Gaming uses visible pixels only, without game-memory inspection/injection/combat automation. Proactive help defaults LOW.
 
@@ -72,4 +72,4 @@ Set absolute Python/model paths in settings. Existing installation scripts repro
 
 Architecture: frontend React/TypeScript/SVG; desktop sandboxed Electron/finite validated IPC; core/agent general loop; core/providers routing; core/plugins MCP/manifests; core/briefing.cjs scenes; core/research-agent.cjs public retrieval; voice workers; tests regression/mocks.
 
-See [spatial research](docs/SPATIAL-RESEARCH.md), [rebuild report](docs/REBUILD_REPORT.md), [verification/limits](docs/VERIFICATION.md) and [safety](docs/SAFETY.md). UI checks do not guarantee fast inference. The new presentation infrastructure passed isolated integration checks; live Ollama research timed out during this update. Every model decision/website/app control cannot be guaranteed.
+See [floating research report](docs/MEMORY-WALL.md), [spatial research](docs/SPATIAL-RESEARCH.md), [rebuild report](docs/REBUILD_REPORT.md), [verification/limits](docs/VERIFICATION.md) and [safety](docs/SAFETY.md). UI checks do not guarantee fast inference. The workspace passed isolated interaction and packaged integration checks. Real local research selected FULL_WORKSPACE and retrieved images automatically, but source-preview fallbacks and incomplete analysis still occurred. Every model decision/website/app control cannot be guaranteed.

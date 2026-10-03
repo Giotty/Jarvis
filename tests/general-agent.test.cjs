@@ -410,6 +410,15 @@ function visualResearch(overrides = {}) {
   s.executor.executeResult = async (a) => {
     s.executed.push(a);
     if (a.tool === 'present_briefing') return briefing.present(a.args);
+    if (a.tool === 'set_response_mode') {
+      workspace.responseMode = a.args.mode;
+      return {
+        success: true,
+        verified: true,
+        mode: a.args.mode,
+        imageQueries: a.args.imageQueries,
+      };
+    }
     return {
       success: true,
       verified: true,
@@ -462,7 +471,10 @@ test('visual research displays actual source images before repeated searches exh
     ),
   );
   assert.match(s.briefing.last.subtitle, /requested analysis may be incomplete/);
-  assert.match(s.events.filter((e) => e.type === 'reply').at(-1).data, /may be incomplete/);
+  assert.match(
+    s.events.filter((e) => e.type === 'reply').at(-1).data,
+    /may (?:still )?be incomplete/,
+  );
   assert.equal(s.agent.active.status, 'incomplete');
   assert.equal(s.agent.busy, false);
 });
@@ -535,6 +547,12 @@ test('research budget exhaustion returns available evidence and clears busy stat
 
 test('background research reserves a final answer instead of endlessly issuing new queries', async () => {
   const s = visualResearch();
+  s.agent.responseMode = 'SIMPLE';
+  const originalBegin = s.executor.host.beginTask;
+  s.executor.host.beginTask = (request) => {
+    originalBegin(request);
+    s.agent.responseMode = 'SIMPLE';
+  };
   let rounds = 0;
   s.ai.chat = async (_, tools) => {
     rounds++;
@@ -766,5 +784,129 @@ test('disabled screen plugin removes cached screen contents from agent context',
   assert.equal(
     s.registry.schemas().some((t) => t.function.name === 'capture_screen'),
     false,
+  );
+});
+
+test('model selects full workspace for an unfamiliar complex goal and automatically retrieves images', async () => {
+  const s = visualResearch();
+  s.replies.push(
+    action(
+      call('set_response_mode', {
+        mode: 'FULL_WORKSPACE',
+        reason: 'Several entities require explanation',
+        imageQueries: ['useful portraits'],
+      }),
+      call('web_search', { query: 'entity history' }),
+    ),
+    answer('Continue.'),
+    answer('Present now.'),
+  );
+  await s.agent.command('Explain the relationships among these historical people.');
+  assert.equal(s.agent.responseMode, 'FULL_WORKSPACE');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['set_response_mode', 'web_search', 'find_images', 'present_briefing'],
+  );
+  assert.ok(s.workspace.current.modules.length);
+});
+test('model-selected simple answers do not open a workspace', async () => {
+  const s = visualResearch();
+  s.replies.push(action(call('set_response_mode', { mode: 'SIMPLE' })), answer('Sixty-three.'));
+  await s.agent.command('What is seven times nine?');
+  assert.equal(s.workspace.current, null);
+  assert.equal(s.agent.active.status, 'completed');
+});
+test('visual assist creates one useful sourced card without requiring a visual phrase', async () => {
+  const s = visualResearch();
+  s.replies.push(
+    action(
+      call('set_response_mode', { mode: 'VISUAL_ASSIST' }),
+      call('web_search', { query: 'a useful observed metric' }),
+    ),
+    answer('Here is the metric.'),
+  );
+  await s.agent.command('Help me understand this number.');
+  assert.equal(s.workspace.current.responseMode, 'VISUAL_ASSIST');
+  assert.equal(s.workspace.current.modules.length, 1);
+});
+
+test('ordinary action and short conversation avoid the extra presentation inference', async () => {
+  const s = setup();
+  let plans = 0;
+  s.ai.presentationMode = async () => {
+    plans++;
+    throw Error('Should not plan');
+  };
+  s.replies.push(answer('Hello.'));
+  await s.agent.command('Hello');
+  s.replies.push(
+    action(call('open_application', { name: 'Calculator' })),
+    answer('Opened Calculator.'),
+  );
+  await s.agent.command('Open Calculator');
+  assert.equal(plans, 0);
+});
+test('deferred model planning preserves specific research subject and retrieves useful visuals', async () => {
+  const s = visualResearch();
+  let plans = 0;
+  s.ai.presentationMode = async () => {
+    plans++;
+    return {
+      mode: 'FULL_WORKSPACE',
+      topic: 'Specific team biographies',
+      imageQueries: ['portraits'],
+    };
+  };
+  s.replies.push(
+    action(call('web_search', { query: 'City' })),
+    answer('Continue.'),
+    answer('Present now.'),
+  );
+  await s.agent.command('Explain the people in this team.');
+  assert.equal(plans, 1);
+  assert.equal(
+    s.executed.find((a) => a.tool === 'web_search').args.query,
+    'Specific team biographies',
+  );
+  assert.ok(s.executed.some((a) => a.tool === 'find_images'));
+  assert.ok(s.workspace.current.modules.length);
+});
+
+test('structured research presentation uses ordinary validation and one failure per checkpoint gets a source preview', async () => {
+  const s = visualResearch({ agentMaxSteps: 6 });
+  let calls = 0,
+    queries = 0;
+  s.ai.presentationMode = async () => ({
+    mode: 'FULL_WORKSPACE',
+    topic: 'Specific subject',
+    imageQueries: [],
+  });
+  s.ai.chat = async () => action(call('web_search', { query: 'specific topic ' + ++queries }));
+  s.ai.researchPresentation = async () => {
+    calls++;
+    return action(
+      call('present_briefing', {
+        title: 'Invalid citation',
+        scenes: [
+          {
+            title: 'Detail',
+            panels: [
+              { type: 'text', title: 'Detail', body: 'Unsupported', sourceIds: ['missing-source'] },
+            ],
+          },
+        ],
+      }),
+    );
+  };
+  await s.agent.command('Explain the multiple aspects of this subject.');
+  assert.ok(s.workspace.current);
+  const presentations = s.agent.active.steps.filter((step) => step.tool === 'present_briefing');
+  assert.equal(calls, 1);
+  assert.equal(presentations[0].result.success, false);
+  assert.ok(presentations.slice(1).every((step) => step.result.success));
+  assert.equal(s.agent.sourcePreviewUsed, true);
+  assert.equal(s.agent.busy, false);
+  assert.ok(
+    s.agent.active.steps.some((s) => s.tool === 'present_briefing' && s.result.success === false),
   );
 });

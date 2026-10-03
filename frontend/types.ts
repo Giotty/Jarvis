@@ -248,7 +248,12 @@ export type Audit = {
 };
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 export type WorkspaceFocus = { panel: number; item?: number; datum?: number; imageId?: string };
-export type WorkspaceSegment = WorkspaceFocus & { text: string };
+export type WorkspaceSegment = WorkspaceFocus & {
+  text: string;
+  focusObjectId?: string;
+  relatedObjectIds?: string[];
+  actions?: { type: string; objectId: string; zone?: string }[];
+};
 export type WorkspaceModule = {
   id: string;
   title: string;
@@ -256,6 +261,17 @@ export type WorkspaceModule = {
   segments: WorkspaceSegment[];
   layout: { x: number; y: number; width: number; height: number };
   state: 'active' | 'ready' | 'docked' | 'closed';
+  objectKey?: string;
+  visualRole?: 'PRIMARY' | 'SECONDARY' | 'CONTEXT' | 'PARKED' | 'STACKED';
+  zIndex?: number;
+  groupId?: string | null;
+  groupTitle?: string;
+  groupCollapsed?: boolean;
+  userLocked?: boolean;
+  userPositioned?: boolean;
+  lockPhase?: string;
+  savedId?: string | null;
+  folderId?: string | null;
   pinned: boolean;
   completed: boolean;
   focus?: WorkspaceFocus;
@@ -269,6 +285,9 @@ export type Workspace = {
   sources: Briefing['sources'];
   modules: WorkspaceModule[];
   researching: boolean;
+  responseMode?: 'SIMPLE' | 'VISUAL_ASSIST' | 'FULL_WORKSPACE';
+  desiredFocus?: string;
+  pendingFocus?: string;
   playback: {
     state: 'idle' | 'playing' | 'paused' | 'waiting' | 'complete' | 'stopped';
     moduleId: string | null;
@@ -292,7 +311,19 @@ export type WorkspaceControl = {
     | 'close'
     | 'pin'
     | 'compare'
-    | 'highlight';
+    | 'highlight'
+    | 'secondary'
+    | 'park'
+    | 'stack'
+    | 'group'
+    | 'ungroup'
+    | 'collapse_group'
+    | 'expand_group'
+    | 'trash';
+  moduleIds?: string[];
+  groupId?: string;
+  groupTitle?: string;
+  zone?: string;
   moduleId?: string;
   otherModuleId?: string;
   x?: number;
@@ -310,8 +341,28 @@ export type ResearchEntry = {
   created: number;
   lastOpened: number | null;
   moduleCount: number;
+  kind?: 'workspace' | 'object' | 'group';
+  folderId?: string | null;
+};
+export type ResearchFolder = { id: string; name: string; parentId: string | null; created: number };
+export type ResearchSave = {
+  moduleIds?: string[];
+  groupId?: string;
+  folderId?: string | null;
+  topic?: string;
 };
 export type JarvisAPI = {
+  workspaceGesture: (input: {
+    sessionId: string;
+    moduleId: string;
+    token: string;
+    phase: 'USER_GRABBED' | 'USER_DRAGGING' | 'USER_RESIZING' | 'RELEASE';
+    layout?: WorkspaceModule['layout'];
+  }) => Promise<Result<unknown>>;
+  researchFolders: () => Promise<Result<ResearchFolder[]>>;
+  createResearchFolder: (name: string, parentId?: string) => Promise<Result<ResearchFolder>>;
+  moveResearch: (id: string, folderId: string | null) => Promise<Result<ResearchEntry>>;
+  openResearchFolder: (id: string) => Promise<Result<unknown>>;
   workspaceControl: (input: WorkspaceControl) => Promise<Result<unknown>>;
   workspaceComplete: (input: {
     sessionId: string;
@@ -319,8 +370,8 @@ export type JarvisAPI = {
     segment: number;
     epoch: number;
   }) => Promise<Result<unknown>>;
-  researchLibrary: () => Promise<Result<ResearchEntry[]>>;
-  saveResearch: () => Promise<Result<{ entry: ResearchEntry }>>;
+  researchLibrary: (query?: string, folderId?: string | null) => Promise<Result<ResearchEntry[]>>;
+  saveResearch: (input?: ResearchSave) => Promise<Result<{ entry: ResearchEntry }>>;
   openResearch: (id: string) => Promise<Result<unknown>>;
   renameResearch: (id: string, topic: string) => Promise<Result<ResearchEntry>>;
   requestResearchDelete: (id: string) => Promise<Result<Confirmation>>;

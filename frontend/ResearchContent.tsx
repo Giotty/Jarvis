@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Briefing, BriefingPanel, WorkspaceFocus, unwrap } from './types';
-const AttributedImage = memo(function AttributedImage({
+export const AttributedImage = memo(function AttributedImage({
   id,
   title,
   focused,

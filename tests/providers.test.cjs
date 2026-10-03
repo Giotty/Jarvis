@@ -394,3 +394,79 @@ test('credentials use encrypted storage and never return full keys; encryption f
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('presentation planner reasons about shape, bounds queries and honors local routing', async () => {
+  const router = new ProviderRouter({ config, secrets: secret });
+  let options;
+  router.chat = async (...args) => {
+    options = args[5];
+    return {
+      content: JSON.stringify({
+        complexity: 'multi_entity',
+        displayHelpful: false,
+        topic: 'Specific team first line biographies',
+        imageQueries: ['portraits', 'arena', 'extra'],
+      }),
+    };
+  };
+  const plan = await router.presentationMode('Explain these people', undefined, true);
+  assert.equal(plan.mode, 'FULL_WORKSPACE');
+  assert.equal(options.localOnly, true);
+  assert.deepEqual(plan.imageQueries, ['portraits', 'arena']);
+  router.chat = async () => ({
+    content: JSON.stringify({
+      complexity: 'single_fact',
+      displayHelpful: true,
+      topic: 'Observed metric',
+      imageQueries: [],
+    }),
+  });
+  assert.equal((await router.presentationMode('Show this metric')).mode, 'VISUAL_ASSIST');
+  router.chat = async () => ({ content: 'invalid' });
+  assert.equal(await router.presentationMode('Question'), null);
+});
+
+test('research organizer returns normal validated tool arguments through the existing provider route', async () => {
+  const router = new ProviderRouter({ config, secrets: secret });
+  let options, input;
+  router.chat = async (...args) => {
+    input = args[0];
+    options = args[5];
+    return {
+      content: JSON.stringify({
+        title: 'Observed topic',
+        mode: 'replace',
+        scenes: [
+          {
+            key: 'subject',
+            title: 'Subject',
+            panels: [
+              { type: 'text', title: 'Observed', body: 'Observed fact', sourceIds: ['known'] },
+            ],
+          },
+        ],
+      }),
+    };
+  };
+  const result = await router.researchPresentation(
+    {
+      request: 'Explain this',
+      evidence: [{ id: 'known', text: 'Observed fact' }],
+      prior: null,
+      schema: { type: 'object' },
+      mode: 'append',
+    },
+    undefined,
+    true,
+  );
+  assert.equal(options.localOnly, true);
+  assert.equal(result.tool_calls[0].function.name, 'present_briefing');
+  assert.equal(result.tool_calls[0].function.arguments.mode, 'append');
+  assert.ok(input[1].content.includes('known'));
+  router.chat = async () => ({ content: 'bad JSON' });
+  assert.equal(
+    (await router.researchPresentation({ request: 'x', evidence: [], schema: {}, mode: 'replace' }))
+      .tool_calls,
+    undefined,
+  );
+});

@@ -335,7 +335,28 @@ function handlers() {
   };
   handle('workspaceControl', (input) => {
     requireWorkspace();
-    return workspace.control(controlSchema.parse(input));
+    return workspace.control(controlSchema.parse(input), 'user');
+  });
+  handle('workspaceGesture', (input) => {
+    requireWorkspace();
+    return workspace.gesture(input);
+  });
+  handle('researchFolders', () => {
+    requireWorkspace();
+    return workspace.library.folders();
+  });
+  handle('createResearchFolder', (name, parentId) => {
+    requireWorkspace();
+    return workspace.library.createFolder(name, parentId || null);
+  });
+  handle('moveResearch', (key, folderId) => {
+    requireWorkspace();
+    return workspace.library.move(key, folderId || null);
+  });
+  handle('openResearchFolder', (folderId) => {
+    requireWorkspace();
+    agent.cancel();
+    return workspace.openFolder(z.string().uuid().parse(folderId));
   });
   handle('workspaceComplete', (input) => {
     requireWorkspace();
@@ -351,13 +372,19 @@ function handlers() {
         .parse(input),
     );
   });
-  handle('researchLibrary', () => {
+  handle('researchLibrary', (query, folderId) => {
     requireWorkspace();
-    return workspace.library.list();
+    return workspace.library.list(
+      z
+        .string()
+        .max(120)
+        .parse(query || ''),
+      folderId === undefined ? undefined : z.string().uuid().nullable().parse(folderId),
+    );
   });
-  handle('saveResearch', () => {
+  handle('saveResearch', (input) => {
     requireWorkspace();
-    return workspace.save();
+    return workspace.save(input || {});
   });
   handle('openResearch', (key) => {
     requireWorkspace();
@@ -393,7 +420,9 @@ function handlers() {
       return { success: false, cancelled: true };
     }
     const action = librarySafety.consume(z.string().uuid().parse(key), z.boolean().parse(yes));
-    return workspace.library.delete(action.args.id);
+    const result = workspace.library.delete(action.args.id);
+    workspace.forgetSaved(action.args.id);
+    return result;
   });
   handle('openResearchSource', (id) => {
     const selected = z.string().max(200).parse(id);
@@ -879,6 +908,9 @@ async function init() {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('render-process-gone', () => workspace.releaseLocks());
+  win.on('hide', () => workspace.releaseLocks());
+  win.on('closed', () => workspace.releaseLocks());
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.session.setPermissionRequestHandler((_web, permission, callback) =>
     callback(permission === 'media' && config.microphone),

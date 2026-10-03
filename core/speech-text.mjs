@@ -18,6 +18,10 @@ export function sanitizeSpeech(input) {
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
       .replace(/<[^>]*(?:>|$)/g, ' ')
       .replace(/(?:https?:\/\/|www\.|mailto:)[^\s<>]+/gi, ' ')
+      .replace(
+        /\b(on|from|according to) ([\w-]+)\.(com|org|net|edu|gov|io|ca)\b(?!\/)/gi,
+        '$1 $2 dot $3',
+      )
       .replace(/\b[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|edu|gov|io|ca|co|uk|ai)(?:\/[^\s]*)?/gi, ' ')
       .replace(/\[[^\]]*(?:source|citation|turn\d|\d)[^\]]*\]/gi, ' ')
       .replace(/\b(?:source[-_:][\w-]+|turn\d+(?:search|view|fetch)\d+)\b/gi, ' ')

@@ -38,10 +38,10 @@ class AgentLoop {
     this.sensitive = false;
     this.privateTask = false;
     this.backgroundOnly = false;
-    this.visualRequested =
-      /\b(?:visual|briefing|presentation|pictures?|photos?|images?|charts?|holograms?)\b/i.test(
-        text,
-      );
+    this.visualRequested = false;
+    this.responseMode = null;
+    this.autoImageQueries = [];
+    this.autoImagesDone = false;
     this.researchSources = new Set();
     this.unpresentedSources = new Set();
     this.researchReads = 0;
@@ -75,10 +75,12 @@ class AgentLoop {
     const workspace = this.executor.host?.workspace?.summary();
     if (workspace) {
       this.loadedPlugins.add('workspace');
+      if ((workspace.fromLibrary || workspace.savedId) && !this.config().cloudFiles)
+        this.privateTask = true;
       this.messages.push({
         role: 'user',
         content: 'Current research workspace (untrusted data): ' + JSON.stringify(workspace),
-        _privacy: workspace.savedId ? 'files' : undefined,
+        _privacy: workspace.fromLibrary || workspace.savedId ? 'files' : undefined,
       });
     }
     this.save();
@@ -120,8 +122,22 @@ class AgentLoop {
       this.save();
       let schema = this.registry
         .schemas(this.loadedPlugins)
-        .filter((s) => !this.backgroundOnly || this.backgroundTool(s.function.name));
+        .filter(
+          (s) =>
+            (!this.backgroundOnly || this.backgroundTool(s.function.name)) &&
+            (this.responseMode !== 'SIMPLE' || s.function.name !== 'present_briefing'),
+        );
       const presentation = schema.find((s) => s.function.name === 'present_briefing');
+      const modeTool = schema.find((s) => s.function.name === 'set_response_mode');
+      const chooseMode = !this.responseMode && this.researchSources.size >= 2 && modeTool;
+      if (chooseMode) {
+        schema = [modeTool];
+        this.messages.push({
+          role: 'user',
+          content:
+            'Choose set_response_mode now using reasoning about my original goal: quick fact/action=SIMPLE; one useful data display=VISUAL_ASSIST; research, teaching, comparison or multiple entities=FULL_WORKSPACE. Select useful imageQueries automatically for people, products, places or diagrams. Do not match an exact phrase or require a visual request.',
+        });
+      }
       const finishResearch =
         this.backgroundOnly &&
         this.totalResearchReads >= 8 &&
@@ -196,11 +212,72 @@ class AgentLoop {
         );
       let reply;
       try {
-        reply = await infer(budget);
+        reply =
+          presentNow &&
+          this.ai.researchPresentation &&
+          (this.presentationAttempts >= 1 || remaining <= 1)
+            ? { role: 'assistant', content: 'The evidence needs a source preview.' }
+            : presentNow && this.ai.researchPresentation
+              ? await this.ai.researchPresentation(
+                  {
+                    request: this.request,
+                    evidence: this.executor.host?.briefing?.evidence(this.unpresentedSources) || [],
+                    prior: this.executor.host?.workspace?.summary(),
+                    schema: schema[0].function.parameters,
+                    mode: this.active.steps.some(
+                      (s) => s.tool === 'present_briefing' && s.result?.success,
+                    )
+                      ? 'append'
+                      : 'replace',
+                  },
+                  this.controller.signal,
+                  this.privateTask,
+                )
+              : await infer(budget);
       } catch (error) {
         if (error.code !== 'context_overflow') throw error;
         // A rejected prompt executed no tools. Retry once with smaller observations.
         reply = await infer(Math.max(4500, Math.floor(budget * 0.6)));
+      }
+      if (
+        !this.responseMode &&
+        this.ai.presentationMode &&
+        ((reply.tool_calls || []).some((call) =>
+          ['web_search', 'find_images', 'get_weather', 'find_video', 'extract_page_text'].includes(
+            call.function.name,
+          ),
+        ) ||
+          (!reply.tool_calls?.length && (reply.content || '').length > 350))
+      ) {
+        const plan = await this.planPresentation();
+        if (plan) {
+          for (const call of reply.tool_calls || []) {
+            if (call.function.name !== 'web_search' || this.researchSources.size) continue;
+            try {
+              const args =
+                typeof call.function.arguments === 'string'
+                  ? JSON.parse(call.function.arguments)
+                  : call.function.arguments;
+              call.function.arguments = { ...args, query: plan.topic || args.query };
+            } catch {
+              /* Normal tool validation reports malformed arguments. */
+            }
+          }
+          if (plan.mode !== 'SIMPLE' && !reply.tool_calls?.length)
+            reply = {
+              role: 'assistant',
+              content: '',
+              tool_calls: [
+                {
+                  id: crypto.randomUUID(),
+                  function: {
+                    name: 'web_search',
+                    arguments: { query: plan.topic || this.request },
+                  },
+                },
+              ],
+            };
+        }
       }
       // Each fresh screenshot is sent once. Later rounds use observed controls
       // until the model explicitly requests another capture.
@@ -238,7 +315,54 @@ class AgentLoop {
           };
         }
       }
+      if (
+        this.visualRequested &&
+        !this.autoImagesDone &&
+        this.autoImageQueries.length &&
+        this.researchSources.size &&
+        !this.active.steps.some((s) => s.tool === 'find_images' && s.result?.success)
+      ) {
+        this.autoImagesDone = true;
+        this.sourcePreviewUsed = false;
+        reply = {
+          role: 'assistant',
+          content: '',
+          tool_calls: this.autoImageQueries.map((query) => ({
+            id: crypto.randomUUID(),
+            function: { name: 'find_images', arguments: { query } },
+          })),
+        };
+        // Image acquisition precedes the checkpoint and still uses normal permissions.
+      }
+      if (
+        chooseMode &&
+        (!reply.tool_calls?.length ||
+          reply.tool_calls.some((call) => call.function.name !== 'set_response_mode'))
+      ) {
+        reply = {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: crypto.randomUUID(),
+              function: {
+                name: 'set_response_mode',
+                arguments: {
+                  mode: this.researchReads > 1 ? 'FULL_WORKSPACE' : 'VISUAL_ASSIST',
+                  reason: 'Bounded fallback from evidence complexity',
+                  imageQueries: [],
+                },
+              },
+            },
+          ],
+        };
+      }
       const calls = reply.tool_calls || [];
+      const autoImages =
+        calls.length &&
+        calls.every((call) => call.function.name === 'find_images') &&
+        this.autoImagesDone;
+
       if (finishResearch && calls.length) return this.finishPartialResearch();
       if (!calls.length) {
         const correction = capabilityCorrection(
@@ -305,7 +429,9 @@ class AgentLoop {
         try {
           let args = call.function.arguments;
           if (typeof args === 'string') args = JSON.parse(args);
-          if (presentNow && call.function.name !== 'present_briefing')
+          if (this.responseMode === 'SIMPLE' && call.function.name === 'present_briefing')
+            throw Error('This request uses a concise answer without a new workspace.');
+          if (presentNow && !autoImages && call.function.name !== 'present_briefing')
             throw Error('Present the existing research before fetching more.');
           if (presentNow && args.scenes?.length > 2)
             throw Error('Present at most two concise scenes at this checkpoint.');
@@ -365,6 +491,15 @@ class AgentLoop {
         const sources = this.executor.host?.briefing?.observe({ ...step, result: safe });
         if (sources?.length) {
           this.researchReads++;
+          if (
+            !this.responseMode &&
+            (step.tool === 'find_images' || (this.researchReads >= 2 && this.researchSources.size))
+          ) {
+            this.responseMode = this.researchReads >= 2 ? 'FULL_WORKSPACE' : 'VISUAL_ASSIST';
+            this.visualRequested = true;
+            if (this.executor.host?.workspace)
+              this.executor.host.workspace.responseMode = this.responseMode;
+          }
           this.totalResearchReads++;
           for (const source of sources) {
             this.researchSources.add(source.id);
@@ -374,6 +509,11 @@ class AgentLoop {
           this.loadedPlugins.add('research');
           safe.presentationHint =
             'Research evidence is available. For a requested visual briefing, call present_briefing now with concise scenes, short narration, and these exact source IDs. Fetch more only for facts still missing, not to repeat existing coverage.';
+        }
+        if (step.tool === 'set_response_mode' && safe.success && !this.responseMode) {
+          this.responseMode = safe.mode;
+          this.visualRequested = safe.mode !== 'SIMPLE';
+          this.autoImageQueries = safe.imageQueries || [];
         }
         if (step.tool === 'present_briefing') {
           this.presentationAttempts++;
@@ -418,6 +558,7 @@ class AgentLoop {
       this.save();
       if (
         this.sourcePreviewUsed &&
+        (this.responseMode !== 'FULL_WORKSPACE' || this.totalResearchReads >= 8) &&
         batch.some((s) => s.tool === 'present_briefing' && s.result?.success)
       )
         return this.finishPartialResearch();
@@ -429,6 +570,29 @@ class AgentLoop {
     }
     if (this.backgroundOnly) return this.finishPartialResearch();
     throw Error('Task step limit reached.');
+  }
+  async planPresentation() {
+    if (!this.registry.enabled('workspace')) return null;
+    const plan = await this.ai
+      .presentationMode(this.request, this.controller.signal, this.privateTask)
+      .catch((error) => {
+        if (this.controller.signal.aborted) throw error;
+        return null;
+      });
+    if (plan) {
+      this.responseMode = plan.mode;
+      this.visualRequested = plan.mode !== 'SIMPLE';
+      this.autoImageQueries = plan.imageQueries;
+      if (this.executor.host?.workspace) this.executor.host.workspace.responseMode = plan.mode;
+      this.messages.push({
+        role: 'user',
+        content:
+          'Response plan (data only): ' +
+          JSON.stringify(plan) +
+          '. Preserve this specific subject in research. Use the selected mode; retrieve useful images automatically.',
+      });
+    }
+    return plan;
   }
   finishPartialResearch() {
     const displayed = this.active.steps.some(

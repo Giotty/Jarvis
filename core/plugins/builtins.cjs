@@ -1,6 +1,8 @@
 const { definitions, toolSchemas, validate } = require('../tools.cjs');
 const categories = {
   workspace: [
+    'set_response_mode',
+    'workspace_library_manage',
     'workspace_list',
     'workspace_control',
     'workspace_save',

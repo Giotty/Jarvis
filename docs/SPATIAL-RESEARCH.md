@@ -1,3 +1,5 @@
+> Historical 0.4.0 implementation notes. The current 0.5.0 wall replaces the two-pane/dock layout and drag-pauses-narration behavior; see [MEMORY-WALL.md](MEMORY-WALL.md).
+
 # Spatial research — JARVIS 0.4.0
 
 ## Reference and HUD

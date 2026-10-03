@@ -3056,3 +3056,252 @@ small,
     transition: none !important;
   }
 }
+
+/* Floating files: the research layer alone borrows rectangular, translucent depth. */
+.memory-wall .floating-file {
+  border: 1px solid #75cfe1aa;
+  border-radius: 0;
+  background: linear-gradient(135deg, #071b26db, #08151adb);
+  box-shadow:
+    inset 0 0 12px #44abc312,
+    5px 5px 0 #00212b88,
+    0 6px 16px #0009;
+  transition:
+    transform 0.48s ease,
+    width 0.4s ease,
+    height 0.4s ease,
+    box-shadow 0.3s,
+    border-color 0.3s;
+  animation: module-assemble 0.3s ease-out;
+  transform-origin: top left;
+}
+.memory-wall .role-PRIMARY {
+  border-color: #c0f6ff;
+  box-shadow:
+    inset 0 0 18px #39bee622,
+    5px 5px 0 #14506c66,
+    0 0 28px #42bed53a;
+}
+.memory-wall .role-SECONDARY {
+  border-color: #83dceeee;
+}
+.memory-wall .role-CONTEXT,
+.memory-wall .role-PARKED {
+  border-color: #4e99aa;
+}
+.memory-wall .role-STACKED {
+  background: linear-gradient(110deg, #072732f5, #04141ce8);
+  box-shadow:
+    4px 4px 0 #3e90a333,
+    8px 8px 0 #27617644;
+}
+.memory-wall .role-USER_LOCKED {
+  transition: none !important;
+  animation: none !important;
+  z-index: 100 !important;
+  border-color: #fff;
+}
+.memory-wall .module-grip {
+  min-height: 25px;
+  padding: 0 6px;
+  gap: 5px;
+  background: linear-gradient(90deg, #367e8e38, transparent);
+}
+.memory-wall .module-grip h3 {
+  font-size: 10px;
+}
+.file-role {
+  font:
+    7px Consolas,
+    monospace;
+  opacity: 0.65;
+}
+.file-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 5px;
+  border-bottom: 1px solid #36778a33;
+  flex-shrink: 0;
+}
+.file-tools button {
+  font-size: 11px;
+  padding: 1px 4px;
+  min-height: 18px;
+  border: 0;
+  background: transparent;
+}
+.file-tools span {
+  font:
+    7px Consolas,
+    monospace;
+  color: #70aebe;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-compact .file-role {
+  display: none;
+}
+.file-compact .module-index {
+  font-size: 8px;
+  padding-right: 4px;
+}
+.context-preview {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  gap: 3px;
+  padding: 5px;
+  overflow: hidden;
+}
+.context-preview .source-image {
+  min-height: 0;
+  max-height: 55%;
+  margin: 0;
+}
+.context-preview img {
+  object-fit: contain;
+  width: 100%;
+  max-height: 65px;
+}
+.context-preview figcaption,
+.context-preview .hologram-depth {
+  display: none;
+}
+.context-preview p {
+  font-size: 9px;
+  line-height: 1.3;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.context-preview button {
+  padding: 2px 4px !important;
+  font-size: 7px !important;
+  align-self: flex-start;
+  margin-top: auto;
+}
+.memory-wall .module-panel-tabs {
+  min-height: 18px;
+  gap: 2px;
+}
+.memory-wall .module-panel-tabs small {
+  font:
+    8px Consolas,
+    monospace;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-wall .module-panel-tabs button {
+  font-size: 7px;
+  padding: 3px;
+}
+.memory-wall .module-resize {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.memory-wall .workspace-actions select,
+.library-folder-controls select,
+.library-entries select {
+  min-width: 0;
+  max-width: 160px;
+  background: #051b26;
+  color: #a5e1f3;
+  border: 1px solid #376778;
+  font:
+    10px Consolas,
+    monospace;
+}
+.memory-wall .workspace-actions select {
+  max-width: 130px;
+}
+.staging-indicator {
+  position: absolute;
+  left: 39%;
+  right: 39%;
+  bottom: 0;
+  text-align: center;
+  font:
+    8px Consolas,
+    monospace;
+  color: #98e1ef;
+  pointer-events: none;
+}
+.library-folder-controls {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+}
+.library-folder-controls form {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  padding: 0;
+  min-width: 0;
+}
+.library-folder-controls input {
+  width: 100%;
+  min-width: 0;
+}
+.memory-wall .presentation-transport {
+  margin-top: 5px;
+}
+.animations-off .floating-file,
+.animations-reduced .floating-file {
+  transition-duration: 0s;
+}
+@media (max-width: 1400px) {
+  .memory-wall .workspace-bar h2 {
+    font-size: 12px;
+  }
+  .memory-wall .workspace-actions {
+    gap: 3px;
+  }
+  .memory-wall .workspace-actions button {
+    padding: 5px;
+  }
+  .file-tools span {
+    display: none;
+  }
+  .context-preview img {
+    max-height: 40px;
+  }
+  .memory-wall .module-grip {
+    min-height: 22px;
+  }
+  .memory-wall .module-panel-tabs small {
+    font-size: 7px;
+  }
+  .library-folder-controls {
+    flex-wrap: wrap;
+  }
+}
+
+.memory-wall .floating-file {
+  animation: file-materialize 0.3s ease-out;
+}
+@keyframes file-materialize {
+  from {
+    opacity: 0;
+    clip-path: inset(45% 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0);
+  }
+}
+.memory-wall .module-grip {
+  height: 25px;
+  flex-shrink: 0;
+}
+.animations-off .memory-wall .floating-file,
+.animations-reduced .memory-wall .floating-file {
+  animation: none;
+}
