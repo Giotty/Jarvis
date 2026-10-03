@@ -394,6 +394,160 @@ test('step limit stops an unbounded model loop', async () => {
   assert.equal(s.agent.active.status, 'failed');
   assert.equal(s.agent.busy, false);
 });
+
+function visualResearch(overrides = {}) {
+  const s = setup(overrides);
+  const { BriefingEngine } = require('../core/briefing.cjs');
+  const { ResearchWorkspace } = require('../core/workspace.cjs');
+  const workspace = new ResearchWorkspace({
+    emit: (type, data) => s.events.push({ type, data }),
+    autoNarrate: () => true,
+  });
+  const briefing = new BriefingEngine({ workspace });
+  s.executor.host.workspace = workspace;
+  s.executor.host.briefing = briefing;
+  s.executor.host.beginTask = (request) => briefing.begin(request);
+  s.executor.executeResult = async (a) => {
+    s.executed.push(a);
+    if (a.tool === 'present_briefing') return briefing.present(a.args);
+    return {
+      success: true,
+      verified: true,
+      sources: [
+        {
+          url: 'https://example.com/' + a.tool,
+          title: 'Retrieved source ' + a.tool,
+          text: 'Observed source text.',
+          images:
+            a.tool === 'find_images'
+              ? [
+                  {
+                    id: '88ad0aaa-e556-4f81-a653-13f7da707d42',
+                    title: 'Real registered image',
+                    url: 'https://example.com/photo.jpg',
+                  },
+                ]
+              : [],
+        },
+      ],
+    };
+  };
+  return { ...s, workspace, briefing };
+}
+
+test('visual research displays actual source images before repeated searches exhaust the task budget', async () => {
+  const s = visualResearch({ agentMaxSteps: 4 });
+  const schemas = [];
+  s.ai.chat = async (_, tools) => {
+    schemas.push(tools.map((t) => t.function.name));
+    return s.replies.shift();
+  };
+  s.replies.push(
+    action(
+      call('web_search', { query: 'team overview' }),
+      call('find_images', { query: 'team logo' }),
+    ),
+    action(call('web_search', { query: 'team overview again' })),
+    answer('Everything is complete.'),
+  );
+  await s.agent.command('Give me a visual briefing with pictures.');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['web_search', 'find_images', 'present_briefing'],
+  );
+  assert.deepEqual(schemas[1], ['present_briefing']);
+  assert.ok(
+    s.workspace.current.modules.some((m) =>
+      m.panels.some((p) => p.imageIds.includes('88ad0aaa-e556-4f81-a653-13f7da707d42')),
+    ),
+  );
+  assert.match(s.briefing.last.subtitle, /requested analysis may be incomplete/);
+  assert.match(s.events.filter((e) => e.type === 'reply').at(-1).data, /may be incomplete/);
+  assert.equal(s.agent.active.status, 'incomplete');
+  assert.equal(s.agent.busy, false);
+});
+
+test('a premature plain answer to a visual request displays only this task’s sources', async () => {
+  const s = visualResearch();
+  s.briefing.sources.set('old', {
+    id: 'old',
+    title: 'Previous private topic',
+    text: 'Old data',
+    url: 'https://example.com/old',
+  });
+  s.replies.push(
+    action(call('find_images', { query: 'current pictures' })),
+    answer('Here are your pictures.'),
+    answer('Finished.'),
+  );
+  await s.agent.command('Show me pictures of this topic.');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['find_images', 'present_briefing'],
+  );
+  assert.ok(s.workspace.current.sources.every((source) => source.id !== 'old'));
+});
+
+test('ordinary background questions do not force a visual presentation', async () => {
+  const s = visualResearch();
+  s.replies.push(
+    action(call('web_search', { query: 'current news' })),
+    answer('Here is the sourced news.'),
+  );
+  await s.agent.command('What happened today?');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['web_search'],
+  );
+  assert.equal(s.workspace.current, null);
+});
+
+test('malformed model presentations get bounded recovery into a validated source preview', async () => {
+  const s = visualResearch({ agentMaxSteps: 6 });
+  s.replies.push(
+    action(call('web_search', { query: 'overview' }), call('find_images', { query: 'photos' })),
+    action(call('present_briefing', { title: 'Invalid', scenes: [] })),
+    action(call('present_briefing', { title: 'Invalid again', scenes: [] })),
+    action(call('web_search', { query: 'do not fetch this' })),
+    answer('Finished.'),
+  );
+  await s.agent.command('Show a visual briefing with photos.');
+  assert.deepEqual(
+    s.executed.map((a) => a.tool),
+    ['web_search', 'find_images', 'present_briefing'],
+  );
+  assert.equal(s.agent.active.steps.filter((step) => step.status === 'failed').length, 2);
+  assert.ok(s.workspace.current.modules.length);
+  assert.equal(s.agent.active.status, 'incomplete');
+  assert.equal(s.agent.busy, false);
+});
+
+test('research budget exhaustion returns available evidence and clears busy state', async () => {
+  const s = visualResearch({ agentMaxSteps: 2 });
+  s.ai.chat = async () => action(call('web_search', { query: 'more details ' + ++id }));
+  await s.agent.command('Research current information.');
+  assert.equal(s.agent.active.steps.length, 2);
+  assert.equal(s.agent.active.status, 'incomplete');
+  assert.equal(s.agent.busy, false);
+  assert.match(s.events.filter((e) => e.type === 'reply').at(-1).data, /found these sources/);
+  assert.doesNotMatch(s.events.filter((e) => e.type === 'reply').at(-1).data, /task limit/);
+});
+
+test('background research reserves a final answer instead of endlessly issuing new queries', async () => {
+  const s = visualResearch();
+  let rounds = 0;
+  s.ai.chat = async (_, tools) => {
+    rounds++;
+    if (rounds <= 8) return action(call('web_search', { query: 'distinct topic ' + rounds }));
+    assert.deepEqual(tools, []);
+    return answer('Here is what the sources support; other details remain unavailable.');
+  };
+  await s.agent.command('Research this topic.');
+  assert.equal(rounds, 9);
+  assert.equal(s.executed.length, 8);
+  assert.equal(s.agent.active.status, 'completed');
+  assert.equal(s.agent.busy, false);
+});
 test('plugin timeout and crashes are isolated; malformed output is rejected', async () => {
   const s = setup();
   s.config.toolTimeout = 15;

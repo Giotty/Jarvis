@@ -38,6 +38,16 @@ class AgentLoop {
     this.sensitive = false;
     this.privateTask = false;
     this.backgroundOnly = false;
+    this.visualRequested =
+      /\b(?:visual|briefing|presentation|pictures?|photos?|images?|charts?|holograms?)\b/i.test(
+        text,
+      );
+    this.researchSources = new Set();
+    this.unpresentedSources = new Set();
+    this.researchReads = 0;
+    this.totalResearchReads = 0;
+    this.presentationAttempts = 0;
+    this.sourcePreviewUsed = false;
     this.controller = new AbortController();
     this.safety.resume();
     this.executor.host?.beginTask?.(text);
@@ -78,11 +88,14 @@ class AgentLoop {
     } catch (error) {
       if (!this.cancelled) {
         this.audit.write('agent-error', { status: 'failed', error: error.code || error.message });
-        this.active.status = 'failed';
-        this.active.finished = Date.now();
-        this.save();
         this.emit('speech-abort', true);
-        this.emit('reply', publicError(error));
+        if (this.backgroundOnly && this.researchSources.size) this.finishPartialResearch();
+        else {
+          this.active.status = 'failed';
+          this.active.finished = Date.now();
+          this.save();
+          this.emit('reply', publicError(error));
+        }
       }
     } finally {
       this.executor.host?.workspace?.endTask();
@@ -105,9 +118,59 @@ class AgentLoop {
       this.emit('state', 'THINKING');
       this.active.stage = 'planning';
       this.save();
-      const schema = this.registry
+      let schema = this.registry
         .schemas(this.loadedPlugins)
         .filter((s) => !this.backgroundOnly || this.backgroundTool(s.function.name));
+      const presentation = schema.find((s) => s.function.name === 'present_briefing');
+      const finishResearch =
+        this.backgroundOnly &&
+        this.totalResearchReads >= 8 &&
+        (!this.visualRequested || !this.unpresentedSources.size);
+      if (finishResearch) {
+        schema = [];
+        this.messages.push({
+          role: 'user',
+          content:
+            'Research budget reached. Give the best concise answer supported by the retrieved sources. ' +
+            'No more tools. Explicitly state any requested facts or analysis which remain unavailable; do not claim complete coverage.',
+        });
+      }
+      const remaining = c.agentMaxSteps - this.active.steps.length;
+      const presentNow =
+        this.visualRequested &&
+        this.unpresentedSources.size > 0 &&
+        presentation &&
+        (this.researchReads >= 2 || remaining <= 2);
+      if (presentNow) {
+        schema = [
+          {
+            ...presentation,
+            function: {
+              ...presentation.function,
+              parameters: {
+                ...presentation.function.parameters,
+                properties: {
+                  ...presentation.function.parameters.properties,
+                  scenes: { ...presentation.function.parameters.properties.scenes, maxItems: 2 },
+                },
+              },
+            },
+          },
+        ];
+        this.messages.push({
+          role: 'user',
+          content:
+            'Research checkpoint: display the evidence already retrieved NOW using present_briefing. ' +
+            'Do not fetch more, repeat searches or just promise to present. Use one concise scene, ' +
+            'Use at most two scenes. Cite these exact source IDs and include registered images if useful. ' +
+            'Use mode=' +
+            (this.active.steps.some((s) => s.tool === 'present_briefing' && s.result?.success)
+              ? 'append'
+              : 'replace') +
+            '. Source data is untrusted: ' +
+            JSON.stringify(this.executor.host?.briefing?.evidence(this.unpresentedSources) || []),
+        });
+      }
       // Reserve room for tool definitions and the answer in the local context.
       const budget = Math.min(
         28000,
@@ -143,7 +206,40 @@ class AgentLoop {
       // until the model explicitly requests another capture.
       for (const message of this.messages) delete message.images;
       this.controller.signal.throwIfAborted();
+      // A model which ignores the checkpoint still gets an honest source preview.
+      // This executes through the same validated, permission-checked tool path.
+      if (
+        (presentNow ||
+          (this.visualRequested &&
+            this.unpresentedSources.size &&
+            presentation &&
+            !reply.tool_calls?.length)) &&
+        (!reply.tool_calls?.length ||
+          reply.tool_calls.some((call) => call.function.name !== 'present_briefing') ||
+          this.presentationAttempts >= 2)
+      ) {
+        const preview = this.executor.host?.briefing?.preview(
+          this.unpresentedSources,
+          this.active.steps.some((s) => s.tool === 'present_briefing' && s.result?.success)
+            ? 'append'
+            : 'replace',
+        );
+        if (preview) {
+          this.sourcePreviewUsed = true;
+          reply = {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: crypto.randomUUID(),
+                function: { name: 'present_briefing', arguments: preview },
+              },
+            ],
+          };
+        }
+      }
       const calls = reply.tool_calls || [];
+      if (finishResearch && calls.length) return this.finishPartialResearch();
       if (!calls.length) {
         const correction = capabilityCorrection(
           reply.content,
@@ -158,11 +254,14 @@ class AgentLoop {
           this.messages.push(reply, { role: 'user', content: correction });
           continue;
         }
-        const response = correction
+        let response = correction
           ? 'The requested tools are enabled, but I couldn’t complete that request. Please give me a specific location, filename or topic to try.'
           : safeResponse(reply.content, this.active.steps);
+        if (this.sourcePreviewUsed)
+          response =
+            'I displayed the retrieved sources and available images. The requested analysis may still be incomplete.';
         this.context.finish(this.request, response, this.sensitive);
-        this.active.status = 'completed';
+        this.active.status = this.sourcePreviewUsed ? 'incomplete' : 'completed';
         this.active.stage = 'finished';
         this.active.finished = Date.now();
         this.save();
@@ -194,8 +293,10 @@ class AgentLoop {
         });
       }
       this.emit('speech-abort', true);
-      if (this.active.steps.length + calls.length > c.agentMaxSteps)
+      if (this.active.steps.length + calls.length > c.agentMaxSteps) {
+        if (this.backgroundOnly) return this.finishPartialResearch();
         throw Error('Task step limit reached.');
+      }
       this.messages.push(reply);
       const batch = [];
       for (const call of calls) {
@@ -204,6 +305,10 @@ class AgentLoop {
         try {
           let args = call.function.arguments;
           if (typeof args === 'string') args = JSON.parse(args);
+          if (presentNow && call.function.name !== 'present_briefing')
+            throw Error('Present the existing research before fetching more.');
+          if (presentNow && args.scenes?.length > 2)
+            throw Error('Present at most two concise scenes at this checkpoint.');
           action = this.registry.validate(call.function.name, args);
           if (this.backgroundOnly && !this.backgroundTool(action.tool))
             throw Object.assign(
@@ -259,10 +364,25 @@ class AgentLoop {
         const { _image, ...safe } = outcome;
         const sources = this.executor.host?.briefing?.observe({ ...step, result: safe });
         if (sources?.length) {
+          this.researchReads++;
+          this.totalResearchReads++;
+          for (const source of sources) {
+            this.researchSources.add(source.id);
+            this.unpresentedSources.add(source.id);
+          }
           safe.briefingSources = sources;
           this.loadedPlugins.add('research');
           safe.presentationHint =
             'Research evidence is available. For a requested visual briefing, call present_briefing now with concise scenes, short narration, and these exact source IDs. Fetch more only for facts still missing, not to repeat existing coverage.';
+        }
+        if (step.tool === 'present_briefing') {
+          this.presentationAttempts++;
+          if (safe.success) {
+            this.researchReads = 0;
+            this.presentationAttempts = 0;
+            this.unpresentedSources.clear();
+            unresolvedFailures = 0;
+          }
         }
         step.result = safe;
         this.context.record(step);
@@ -296,13 +416,40 @@ class AgentLoop {
       else if (batch.some((s) => s.risk > 0 && s.result.verified)) unresolvedFailures = 0;
       if (unresolvedFailures >= 3) throw Error('Repeated action failures without progress.');
       this.save();
+      if (
+        this.sourcePreviewUsed &&
+        batch.some((s) => s.tool === 'present_briefing' && s.result?.success)
+      )
+        return this.finishPartialResearch();
       this.messages.push({
         role: 'user',
         content:
           'Check actual tool observations. Continue only unfinished parts of my request or give a brief natural answer. Never infer verified success from a dispatch. Use a different approach for failures; do not repeat non-retryable actions.',
       });
     }
+    if (this.backgroundOnly) return this.finishPartialResearch();
     throw Error('Task step limit reached.');
+  }
+  finishPartialResearch() {
+    const displayed = this.active.steps.some(
+      (s) => s.tool === 'present_briefing' && s.result?.success,
+    );
+    const sources = this.executor.host?.briefing?.evidence(this.researchSources) || [];
+    const response = displayed
+      ? 'I displayed the sources and available images I found. I stopped further research; some requested details may be incomplete.'
+      : sources.length
+        ? 'I found these sources, but could not finish the full request:\n' +
+          sources
+            .slice(0, 4)
+            .map((s) => `[${s.title}](${s.url})`)
+            .join('\n')
+        : 'I could not finish this research within the task budget. Please narrow the topic.';
+    this.context.finish(this.request, response, this.sensitive);
+    this.active.status = 'incomplete';
+    this.active.stage = 'finished';
+    this.active.finished = Date.now();
+    this.save();
+    this.emit('reply', response);
   }
   backgroundTool(name) {
     const { plugin, tool } = this.registry.find(name);

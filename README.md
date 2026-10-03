@@ -1,10 +1,10 @@
 # JARVIS — MAATOUK INDUSTRIES
 
-**0.4.0** adds a spatial research workspace to JARVIS's general AI desktop agent and original reactor HUD. Narration focuses, advances and docks movable research modules automatically. Briefings can be compared, saved and reopened locally. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
+**0.4.1** adds research checkpoints and attributed picture previews so repeated searches cannot consume the whole task without a presentation. The spatial workspace supports automatic narration focus, movable modules, comparison and a local saved library. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
 
 ## Launch
 
-Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.4.0.exe`.
+Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.4.1.exe`.
 
 The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **Kokoro bm_george** British male speech. Piper/Windows voices remain supported. Windows currently exposes **no recording endpoint**: connect/enable a microphone and choose it in radial VOICE settings.
 

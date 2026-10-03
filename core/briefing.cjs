@@ -149,14 +149,14 @@ class BriefingEngine {
     if (ids.length) this.publish(this.automatic(), false);
     return ids;
   }
-  automatic() {
-    const sources = [...this.sources.values()],
+  automatic(sourceIds) {
+    const sources = [...this.sources.values()].filter((s) => !sourceIds || sourceIds.has(s.id)),
       scenes = [];
     for (const source of sources.slice(0, 5)) {
       const panels = [
         {
           type: 'text',
-          title: source.title,
+          title: source.title.slice(0, 90),
           body: (source.text || source.snippet || 'Public source retrieved.').slice(0, 500),
           sourceIds: [source.id],
         },
@@ -219,6 +219,38 @@ class BriefingEngine {
       subtitle: 'Source observations · select Narrate for a guided presentation',
       scenes: scenes.slice(0, 8),
     };
+  }
+  preview(sourceIds, mode = 'replace') {
+    if (!sourceIds.size) return null;
+    const preview = this.automatic(sourceIds);
+    preview.scenes = preview.scenes
+      .filter((scene) => scene.panels[0].type !== 'sources')
+      .sort(
+        (a, b) =>
+          Number(b.panels.some((p) => p.type === 'images')) -
+          Number(a.panels.some((p) => p.type === 'images')),
+      )
+      .slice(0, 2);
+    // This is an attributed source preview, not a fabricated model analysis.
+    preview.subtitle = 'Retrieved source material · requested analysis may be incomplete';
+    preview.mode = mode;
+    return briefingSchema.parse(preview);
+  }
+  evidence(sourceIds) {
+    return [...sourceIds].slice(-8).flatMap((id) => {
+      const source = this.sources.get(id);
+      return source
+        ? [
+            {
+              id,
+              title: source.title,
+              url: source.url,
+              excerpt: (source.text || source.snippet || '').slice(0, 700),
+              images: (source.images || []).slice(0, 3).map(({ id, title }) => ({ id, title })),
+            },
+          ]
+        : [];
+    });
   }
   present(input) {
     return this.publish(briefingSchema.parse(input), true);
