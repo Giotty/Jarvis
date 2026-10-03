@@ -1,4 +1,12 @@
 const cheerio = require('cheerio');
+const {
+  searchPublic,
+  relevance,
+  cleanUrl,
+  diverse,
+  terms,
+  coveringLinks,
+} = require('./research-search.cjs');
 const dns = require('node:dns/promises');
 const http = require('node:http');
 const https = require('node:https');
@@ -96,7 +104,66 @@ async function webGet(
   }
   throw Error('Too many page redirects.');
 }
-function extract(html, url) {
+function structuredText($) {
+  const lines = [];
+  let visited = 0;
+  const useful =
+    /^(name|firstName|lastName|fullName|headline|description|articleBody|text|birthDate|birthPlace|jobTitle|position|positionCode|datePublished|dateModified|startDate|endDate|value|unitText|price|priceCurrency|ratingValue|ratingCount|teamName|title|label|caption|addressLocality|addressCountry)$/i;
+  const walk = (value, path, depth = 0) => {
+    if (++visited > 6000 || depth > 12 || lines.join('').length > 12000) return;
+    if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value))
+        walk(child, [...path.slice(-3), key], depth + 1);
+    } else if (useful.test(path.at(-1) || '') && ['string', 'number'].includes(typeof value))
+      lines.push(path.join('.') + ': ' + String(value).slice(0, 2500));
+  };
+  $('script[type="application/ld+json"],script[type="application/json"],script#__NEXT_DATA__')
+    .slice(0, 12)
+    .each((_, node) => {
+      try {
+        walk(JSON.parse($(node).text()), []);
+      } catch {
+        /* Malformed data is not executable content. */
+      }
+    });
+  return lines.join('\n');
+}
+function excerpt(text, query, limit = 12000) {
+  if (!query || text.length <= limit) return text.slice(0, limit);
+  const blocks = text.split('\n').filter(Boolean);
+  const wanted = terms(query),
+    tokens = blocks.map((b) => new Set(terms(b)));
+  const weights = new Map(
+    wanted.map((t) => [
+      t,
+      Math.log(1 + blocks.length / (1 + tokens.filter((b) => b.has(t)).length)),
+    ]),
+  );
+  const scored = blocks
+    .map((body, i) => ({
+      body,
+      i,
+      score: wanted.reduce((sum, t) => sum + (tokens[i].has(t) ? weights.get(t) : 0), 0),
+    }))
+    .filter((b) => b.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const selected = new Set([0]);
+  let size = blocks[0]?.length || 0;
+  for (const b of scored) {
+    if (size + b.body.length > limit - 500) continue;
+    for (const i of [b.i - 1, b.i, b.i + 1])
+      if (i >= 0 && i < blocks.length && !selected.has(i) && size + blocks[i].length <= limit) {
+        selected.add(i);
+        size += blocks[i].length;
+      }
+  }
+  return [...selected]
+    .sort((a, b) => a - b)
+    .map((i) => blocks[i])
+    .join('\n')
+    .slice(0, limit);
+}
+function extract(html, url, query = '') {
   const $ = cheerio.load(html);
   const title = $('title').first().text().trim();
   const images = [];
@@ -113,15 +180,59 @@ function extract(html, url) {
       .attr('content') ||
     $('time[datetime]').first().attr('datetime') ||
     null;
+  const structured = structuredText($);
   $('script,style,noscript,iframe,form,nav,footer,header,aside,svg,[hidden]').remove();
   const main = $('article,main,[role=main]').first();
-  const text = (main.length ? main : $('body')).text().replace(/\s+/g, ' ').trim().slice(0, 12000);
+  const content = main.length && main.text().trim().length >= 100 ? main : $('body');
+  const links = [];
+  if (query)
+    content.find('a[href]').each((_, node) => {
+      const target = cleanUrl($(node).attr('href'), url),
+        label = $(node).text().trim();
+      if (
+        !target ||
+        !label ||
+        /login|sign in|privacy|cookie|subscribe|shop|tickets/i.test(label) ||
+        /^(view|talk|edit|archived|quizzes|print)$/i.test(label) ||
+        /\/wiki\/(?:Talk|Template_talk|File|Special|Help):/.test(target)
+      )
+        return;
+      const score = relevance({ title: label, url: target }, query);
+      if (score > 0)
+        links.push({
+          id: require('node:crypto').randomUUID(),
+          title: label,
+          url: target,
+          relevance: score,
+          source: new URL(target).hostname,
+          fetchedAt: Date.now(),
+        });
+    });
+  // Preserve table/section boundaries instead of merging roster names and cells.
+  content.find('tr,h1,h2,h3,p,li').append('\n');
+  content.find('td,th').each((_, n) => {
+    $(n).html($(n).text().replace(/\s+/g, ' ').trim() + ' | ');
+  });
+  const body = content
+    .text()
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/\n\s*\n/g, '\n')
+    .trim();
+  const text = excerpt(
+    body + (structured ? '\nPublic structured page data:\n' + structured : ''),
+    query,
+    query ? 4500 : 12000,
+  );
   return {
     url,
     title,
     text,
     publishedAt,
     images: images.slice(0, 3),
+    links: diverse(
+      links.sort((a, b) => b.relevance - a.relevance),
+      8,
+    ),
     untrusted: true,
     fetchedAt: Date.now(),
   };
@@ -151,20 +262,28 @@ class ResearchAgent {
     this.imageCache = new Map();
     this.get = get;
   }
-  async research(query, signal, topic = 'general') {
-    const found = await this.search(topic === 'video' ? query + ' YouTube' : query, signal);
+  async research(query, signal, topic = 'general', alternatives = []) {
+    const deadline = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(22000)])
+      : AbortSignal.timeout(22000);
+    const found = await this.search(
+      topic === 'video' ? query + ' YouTube' : query,
+      deadline,
+      false,
+      alternatives,
+    );
     if (!found.success) return found;
     const read = async (items) =>
       Promise.all(
         items.map(async (item) => {
           try {
-            const page = await this.page(item.url, signal);
+            const page = await this.page(item.url, deadline, query);
             return {
               ...item,
               ...page,
               text: page.videos?.length
                 ? 'Public channel uploads, publication dates and available view counts are listed in videos below. Shorts are identified separately. Counts are snapshots, not guaranteed live.'
-                : page.text.slice(0, 3000),
+                : page.text.slice(0, 4500),
               ...(page.videos ? { videos: page.videos.slice(0, 8) } : {}),
               readable: Boolean(
                 page.text && (page.text.length >= 200 || page.video || page.videos?.length),
@@ -181,12 +300,28 @@ class ResearchAgent {
         }),
       );
     const fetched = await read(found.results.slice(0, 6));
-    const sources = [
-      ...fetched.filter((s) => s.readable),
-      ...fetched.filter((s) => !s.readable),
-    ].slice(0, 3);
+    // Read up to four useful links discovered inside source pages (including
+    // smaller sites linked by an encyclopedia or official page). Never execute JS.
+    const seen = new Set(fetched.map((s) => s.url));
+    const links = coveringLinks(
+      fetched
+        .flatMap((s) => s.links || [])
+        .filter((l) => !seen.has(l.url))
+        .sort((a, b) => b.relevance - a.relevance),
+      query,
+      4,
+    );
+    const deeper = deadline.aborted ? [] : await read(links);
+    const sources = diverse(
+      [
+        ...[...deeper, ...fetched].filter((s) => s.readable),
+        ...[...fetched, ...deeper].filter((s) => !s.readable),
+      ],
+      6,
+    );
+    const { results: _results, ...searchInfo } = found;
     return {
-      ...found,
+      ...searchInfo,
       // Do not repeat the same search snippets alongside full source observations.
       results: sources.map(({ id, title, url }) => ({ id, title, url })),
       sources,
@@ -194,88 +329,31 @@ class ResearchAgent {
         'Background research completed. Answer the user directly with actual source links. Distinguish snippets from read pages. For YouTube, latest regular video and latest Short can differ: identify which you mean using isShort and publishedAt. viewCount is a retrieved public snapshot; fetchedAt is retrieval time, not publication time or a guarantee of live statistics. Missing counts mean unavailable, never zero. For stocks verify company, exchange, currency and quote timestamp; report delayed data honestly. If sources are blocked or incomplete, try another background source or say what could not be verified. Do not open a browser or ask the user to read their screen.',
     };
   }
-  async search(query, signal, video = false) {
+  async search(query, signal, video = false, alternatives = []) {
     if (!query?.trim()) throw Error('A search phrase is required.');
-    const phrase = video ? query + ' YouTube video' : query;
-    let page;
-    try {
-      page = await this.get(
-        'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(phrase),
-        signal,
-      );
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      page = { html: '', url: 'https://html.duckduckgo.com/' };
-    }
-    const $ = cheerio.load(page.html);
-    const results = [];
-    $('.result').each((_, node) => {
-      const link = $(node).find('.result__a').first();
-      let target;
-      try {
-        const raw = new URL(link.attr('href'), page.url);
-        target = new URL(raw.searchParams.get('uddg') || raw.href);
-      } catch {
-        return;
-      }
-      if (
-        !['http:', 'https:'].includes(target.protocol) ||
-        target.hostname.endsWith('duckduckgo.com')
-      )
-        return;
-      if (video && !videoId(target)) return;
-      const title = link.text().trim();
-      if (!title || results.some((r) => r.url === target.href)) return;
-      const item = {
-        id: require('node:crypto').randomUUID(),
-        title,
-        url: target.href,
-        snippet: $(node).find('.result__snippet').text().trim().slice(0, 600),
-        source: target.hostname,
-        fetchedAt: Date.now(),
-      };
-      results.push(item);
-    });
-    if (!results.length) {
-      const alternate = await this.get(
-        'https://www.bing.com/search?format=rss&q=' + encodeURIComponent(phrase),
-        signal,
-      );
-      const xml = cheerio.load(alternate.html, { xmlMode: true });
-      xml('item')
-        .slice(0, 6)
-        .each((_, node) => {
-          const url = xml(node).find('link').text().trim(),
-            title = xml(node).find('title').text().trim();
-          try {
-            const parsed = new URL(url);
-            if (!['https:', 'http:'].includes(parsed.protocol) || !title) return;
-            if (video && !videoId(parsed)) return;
-            results.push({
-              id: require('node:crypto').randomUUID(),
-              title,
-              url,
-              snippet: xml(node).find('description').text().trim().slice(0, 600),
-              source: parsed.hostname,
-              fetchedAt: Date.now(),
-            });
-          } catch {}
-        });
-    }
-    for (const item of results.slice(0, 6)) this.results.set(item.id, item);
-    while (this.results.size > 36) this.results.delete(this.results.keys().next().value);
+    signal?.throwIfAborted();
+    const found = await searchPublic(
+      this.get,
+      video ? query + ' YouTube video' : query,
+      signal,
+      alternatives,
+    );
+    const results = found.results.filter((r) => !video || videoId(new URL(r.url)));
+    for (const result of results) this.results.set(result.id, result);
+    while (this.results.size > 72) this.results.delete(this.results.keys().next().value);
     return {
       success: results.length > 0,
       verified: results.length > 0,
-      results: results.slice(0, 6),
+      ...found,
+      results,
       untrusted: true,
       message: results.length
-        ? 'Search results are ready. Check the sources before relying on their claims.'
-        : 'The free search provider returned no readable results. Try a different search or give me a link.',
+        ? 'Relevant sources from multiple public indexes are ready. Check source dates before claiming current facts.'
+        : 'Public indexes returned no relevant results. Refine the subject or read a known public source; do not substitute unrelated results.',
       retryable: false,
     };
   }
-  async page(url, signal) {
+  async page(url, signal, query = '') {
     const parsed = new URL(url),
       id = videoId(parsed);
     if (id) {
@@ -314,7 +392,7 @@ class ResearchAgent {
       });
     }
     const page = await this.get(url, signal);
-    const output = { success: true, verified: true, ...extract(page.html, page.url) };
+    const output = { success: true, verified: true, ...extract(page.html, page.url, query) };
     if (
       ['www.youtube.com', 'youtube.com'].includes(parsed.hostname) &&
       /^(?:\/@|\/channel\/)/.test(parsed.pathname)
@@ -439,4 +517,5 @@ module.exports = {
   videoId,
   publicCount,
   watchMetadata,
+  excerpt,
 };

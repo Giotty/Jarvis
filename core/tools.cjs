@@ -184,6 +184,13 @@ const definitions = {
     schema: z
       .object({
         query: z.string().trim().min(1).max(500),
+        queries: z
+          .array(z.string().trim().min(1).max(500))
+          .max(2)
+          .optional()
+          .describe(
+            'Additional focused public searches for missing aspects or alternate terminology. Preserve the exact subject; do not guess current facts.',
+          ),
         topic: z.enum(['general', 'news', 'video']).default('general'),
         purpose: z
           .enum(['background', 'desktop_task'])
@@ -958,7 +965,7 @@ class Executor {
         if (p.action === 'new_tab' && p.url) return this.host.browser.open(p.url, signal, true);
         return this.host.browser.control(p.action, p.index, signal);
       case 'web_search':
-        return this.host.research.research(p.query, signal, p.topic);
+        return this.host.research.research(p.query, signal, p.topic, p.queries);
       case 'find_images':
         return this.host.research.research(p.query + ' images', signal);
       case 'present_briefing':

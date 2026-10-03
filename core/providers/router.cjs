@@ -102,9 +102,10 @@ class ProviderRouter {
         },
         displayHelpful: { type: 'boolean' },
         topic: { type: 'string' },
+        searchQueries: { type: 'array', items: { type: 'string' }, maxItems: 3 },
         imageQueries: { type: 'array', items: { type: 'string' }, maxItems: 2 },
       },
-      required: ['complexity', 'displayHelpful', 'topic', 'imageQueries'],
+      required: ['complexity', 'displayHelpful', 'topic', 'imageQueries', 'searchQueries'],
       additionalProperties: false,
     };
     const reply = await this.chat(
@@ -112,7 +113,9 @@ class ProviderRouter {
         {
           role: 'system',
           content:
-            'Plan presentation only. Return JSON. Judge the original request by number of subjects and requested aspects, not exact phrases. A quick condition, time, calculation or PC action is single_fact/single_action. A roster with biographies is multi_entity. Explaining several aspects of a product/person is multi_part. Teaching is teaching; comparisons are comparison; investigation is research. These complex categories always need a visual workspace. For a single fact displayHelpful is true only when a card/chart is requested or materially useful. topic must preserve the specific subject, avoiding broad city/company-name-only searches. Choose up to two public imageQueries when relevant portraits, product images, locations or diagrams aid understanding. Do not answer the question or invent current facts.',
+            'Plan presentation only. Return JSON. Judge the original request by number of subjects and requested aspects, not exact phrases. A quick condition, time, calculation or PC action is single_fact/single_action. A roster with biographies is multi_entity. Explaining several aspects of a product/person is multi_part. Teaching is teaching; comparisons are comparison; investigation is research. These complex categories always need a visual workspace. For a single fact displayHelpful is true only when a card/chart is requested or materially useful. topic must preserve the specific subject, avoiding broad city/company-name-only searches. Provide up to three concise searchQueries covering the needed aspects and alternate terminology; begin with the most distinctive entity keyword, preserve its full name and avoid conversational filler. If a roster/lineup is needed, identify it from dated sources before inventing any player names. Choose up to two public imageQueries when relevant portraits, product images, locations or diagrams aid understanding. Do not answer the question or invent current facts. For current requests do not assume an earlier year or season. Today is ' +
+            new Date().toISOString().slice(0, 10) +
+            '.',
         },
         { role: 'user', content: request },
       ],
@@ -120,7 +123,7 @@ class ProviderRouter {
       false,
       signal,
       undefined,
-      { schema, outputTokens: 320, localOnly },
+      { schema, outputTokens: 480, localOnly },
     );
     let value;
     try {
@@ -142,6 +145,10 @@ class ProviderRouter {
           : 'SIMPLE'
         : 'FULL_WORKSPACE',
       topic: value.topic.slice(0, 250),
+      searchQueries: (Array.isArray(value.searchQueries) ? value.searchQueries : [])
+        .filter((q) => typeof q === 'string' && q.trim())
+        .slice(0, 3)
+        .map((q) => q.trim().slice(0, 250)),
       imageQueries: value.imageQueries
         .filter((q) => typeof q === 'string' && q.trim())
         .slice(0, 2)

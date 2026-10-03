@@ -258,7 +258,11 @@ class AgentLoop {
                 typeof call.function.arguments === 'string'
                   ? JSON.parse(call.function.arguments)
                   : call.function.arguments;
-              call.function.arguments = { ...args, query: plan.topic || args.query };
+              call.function.arguments = {
+                ...args,
+                query: plan.searchQueries?.[0] || plan.topic || args.query,
+                ...(plan.searchQueries?.length ? { queries: plan.searchQueries.slice(1) } : {}),
+              };
             } catch {
               /* Normal tool validation reports malformed arguments. */
             }
@@ -272,7 +276,12 @@ class AgentLoop {
                   id: crypto.randomUUID(),
                   function: {
                     name: 'web_search',
-                    arguments: { query: plan.topic || this.request },
+                    arguments: {
+                      query: plan.searchQueries?.[0] || plan.topic || this.request,
+                      ...(plan.searchQueries?.length
+                        ? { queries: plan.searchQueries.slice(1) }
+                        : {}),
+                    },
                   },
                 },
               ],

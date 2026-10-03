@@ -275,13 +275,7 @@ export const WorkspaceView = memo(function WorkspaceView({
           </select>
           <button onClick={() => save()}>SAVE ALL</button>
           <button onClick={onLibrary}>LIBRARY</button>
-          <button
-            aria-label="Hide research workspace"
-            onClick={() => {
-              control({ action: 'pause' });
-              onClose();
-            }}
-          >
+          <button aria-label="Hide research workspace" onClick={onClose}>
             ×
           </button>
         </div>
@@ -573,10 +567,12 @@ export const WorkspaceView = memo(function WorkspaceView({
 
 export function ResearchLibraryView({
   onClose,
+  onOpen,
   onDelete,
   onError,
 }: {
   onClose: () => void;
+  onOpen?: () => void;
   onDelete: (c: Confirmation) => void;
   onError: (s: string) => void;
 }) {
@@ -642,7 +638,10 @@ export function ResearchLibraryView({
           disabled={!folder}
           onClick={() =>
             void unwrap(window.jarvis!.openResearchFolder(folder))
-              .then(onClose)
+              .then(() => {
+                onOpen?.();
+                onClose();
+              })
               .catch((e) => onError(String(e)))
           }
         >
@@ -715,7 +714,10 @@ export function ResearchLibraryView({
                 <button
                   onClick={() =>
                     void unwrap(window.jarvis!.openResearch(e.id))
-                      .then(onClose)
+                      .then(() => {
+                        onOpen?.();
+                        onClose();
+                      })
                       .catch((err) => onError(String(err)))
                   }
                 >

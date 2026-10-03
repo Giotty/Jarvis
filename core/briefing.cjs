@@ -248,7 +248,7 @@ class BriefingEngine {
               id,
               title: source.title,
               url: source.url,
-              excerpt: (source.text || source.snippet || '').slice(0, 700),
+              excerpt: (source.text || source.snippet || '').slice(0, 1800),
               images: (source.images || []).slice(0, 3).map(({ id, title }) => ({ id, title })),
             },
           ]
@@ -304,16 +304,23 @@ class BriefingEngine {
           )
             throw Error('Narration focus must reference real panel content.');
         }
-    const sources = [...this.sources.values()].map((s) => ({
-      id: s.id,
-      title: s.title,
-      url: s.url,
-      publishedAt: s.publishedAt,
-      fetchedAt: typeof s.fetchedAt === 'string' ? Date.parse(s.fetchedAt) : s.fetchedAt,
-      readable:
-        s.readable === true || (s.readable !== false && !!(s.text || s.videos || s.current)),
-      images: s.images || [],
-    }));
+    // Broader searches retain uncited observations in the registry. Only attach
+    // sources used by these files; otherwise unrelated reads fill the wall's cap.
+    const cited = new Set(
+      input.scenes.flatMap((scene) => scene.panels.flatMap((p) => p.sourceIds)),
+    );
+    const sources = [...this.sources.values()]
+      .filter((s) => cited.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        title: s.title,
+        url: s.url,
+        publishedAt: s.publishedAt,
+        fetchedAt: typeof s.fetchedAt === 'string' ? Date.parse(s.fetchedAt) : s.fetchedAt,
+        readable:
+          s.readable === true || (s.readable !== false && !!(s.text || s.videos || s.current)),
+        images: s.images || [],
+      }));
     const next = {
       ...input,
       id: crypto.randomUUID(),

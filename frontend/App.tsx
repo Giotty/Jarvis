@@ -125,10 +125,10 @@ export function App() {
     acceptReplies = useRef(true);
   const narrationDone = useRef<(() => void) | null>(null),
     narrateThisTask = useRef(false);
-  const workspaceRef = useRef(workspace);
+  const workspaceRef = useRef(workspace),
+    dismissedWorkspace = useRef<string | null>(null);
   workspaceRef.current = workspace;
-  const closeWorkspace = useCallback(() => setBriefingVisible(false), []),
-    openLibrary = useCallback(() => setLibraryOpen(true), []);
+  const openLibrary = useCallback(() => setLibraryOpen(true), []);
   const stopNarration = useCallback(() => {
     narrationDone.current = null;
     speechGeneration.current++;
@@ -165,6 +165,17 @@ export function App() {
       ),
     [],
   );
+  const closeWorkspace = useCallback(() => {
+    dismissedWorkspace.current = workspaceRef.current?.id || null;
+    narrateThisTask.current = false;
+    stopNarration();
+    setBriefingVisible(false);
+    // Mark dismissal before IPC: its pause/update event must not reopen this session.
+    if (window.jarvis && workspaceRef.current)
+      void unwrap(window.jarvis.workspaceControl({ action: 'pause' })).catch((e) =>
+        report(String(e)),
+      );
+  }, [stopNarration, report]);
   if (!player.current)
     player.current = new SpeechPlayback({
       synthesize: async (text) => {
@@ -449,18 +460,24 @@ export function App() {
         setAIUsage(s.aiUsage || null);
         setPlugins(s.plugins || []);
         if (s.workspace) {
+          workspaceRef.current = s.workspace;
           setWorkspace(s.workspace);
-          setBriefingVisible(true);
+          if (dismissedWorkspace.current !== s.workspace.id) setBriefingVisible(true);
         }
       })
       .catch((e) => report(String(e)));
     const unsub = api.on((e) => {
       switch (e.type) {
-        case 'workspace':
+        case 'workspace': {
+          const incoming = e.data as Workspace;
+          workspaceRef.current = incoming;
           setWorkspace(e.data as Workspace);
-          setBriefingVisible(true);
-          if ((e.data as Workspace).playback.state === 'playing') narrateThisTask.current = true;
+          if (dismissedWorkspace.current !== incoming.id) {
+            setBriefingVisible(true);
+            if (incoming.playback.state === 'playing') narrateThisTask.current = true;
+          }
           break;
+        }
         case 'briefing':
           if ((e.data as Briefing).modelOrganized) narrateThisTask.current = true;
           break;
@@ -971,6 +988,12 @@ export function App() {
         {libraryOpen && (
           <ResearchLibraryView
             onClose={() => setLibraryOpen(false)}
+            onOpen={() => {
+              dismissedWorkspace.current = null;
+              setBriefingVisible(true);
+              setPage('HOME');
+              setSettingsOpen(false);
+            }}
             onDelete={setConfirmation}
             onError={report}
           />
@@ -1023,6 +1046,7 @@ export function App() {
             {workspace && (
               <button
                 onClick={() => {
+                  dismissedWorkspace.current = null;
                   setBriefingVisible(true);
                   setPage('HOME');
                   setSettingsOpen(false);

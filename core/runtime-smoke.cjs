@@ -162,6 +162,40 @@ async function smoke(win, directory, host) {
       path.join(directory, 'workspace.png'),
       (await win.webContents.capturePage()).toPNG(),
     );
+    // Reproduce the owner's X click with real pointer input, then deliver late
+    // playback/research updates. The same session must stay dismissed.
+    const target = await win.webContents.executeJavaScript(`(() => {
+      const r=document.querySelector('button[aria-label="Hide research workspace"]').getBoundingClientRect();
+      return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};
+    })()`);
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...target });
+    win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...target });
+    win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...target });
+    await new Promise((r) => setTimeout(r, 650));
+    host.workspace.publish();
+    await new Promise((r) => setTimeout(r, 650));
+    const closeChecks = await win.webContents.executeJavaScript(`(async()=>{
+      const s=(await window.jarvis.snapshot()).data;
+      return {closed:!document.querySelector('.spatial-workspace'),undimmed:!document.querySelector('.briefing-open'),
+        retained:!!s.workspace,paused:s.workspace.playback.state==='paused'};
+    })()`);
+    await click('button[aria-label="Open radial settings"]');
+    closeChecks.hudAccessible = await win.webContents.executeJavaScript(
+      "!!document.querySelector('.orbit-node')",
+    );
+    await win.webContents.executeJavaScript(
+      "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='BRIEFING').click()",
+    );
+    await new Promise((r) => setTimeout(r, 650));
+    closeChecks.reopened = await win.webContents.executeJavaScript(
+      "!!document.querySelector('.spatial-workspace')",
+    );
+    for (const [name, valid] of Object.entries(closeChecks))
+      if (!valid) throw Error('Presentation close check failed: ' + name);
+    fs.writeFileSync(
+      path.join(directory, 'presentation-close-checks.json'),
+      JSON.stringify(closeChecks, null, 2),
+    );
   }
 }
 module.exports = { smoke };
