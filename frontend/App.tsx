@@ -23,6 +23,7 @@ import {
   ScreenState,
   BrowserState,
   AIUsage,
+  GoogleGrounding,
   Plugin,
   unwrap,
 } from './types';
@@ -88,6 +89,8 @@ export function App() {
     [screenContext, setScreenContext] = useState<ScreenState | null>(null),
     [browserState, setBrowserState] = useState<BrowserState | null>(null),
     [aiUsage, setAIUsage] = useState<AIUsage | null>(null),
+    [grounding, setGrounding] = useState<GoogleGrounding | null>(null),
+    [groundingOpen, setGroundingOpen] = useState(false),
     [plugins, setPlugins] = useState<Plugin[]>([]),
     [clock, setClock] = useState(new Date()),
     [messages, setMessages] = useState<Message[]>([
@@ -458,6 +461,7 @@ export function App() {
         setMemories(s.memories);
         setScreenContext(s.screenContext || null);
         setAIUsage(s.aiUsage || null);
+        setGrounding(s.googleGrounding || null);
         setPlugins(s.plugins || []);
         if (s.workspace) {
           workspaceRef.current = s.workspace;
@@ -483,6 +487,9 @@ export function App() {
           break;
         case 'ai-usage':
           setAIUsage(e.data as AIUsage);
+          break;
+        case 'google-grounding':
+          setGrounding(e.data as GoogleGrounding);
           break;
         case 'plugins':
           setPlugins(e.data as Plugin[]);
@@ -692,7 +699,21 @@ export function App() {
       : state === 'IDLE' && voice.listening
         ? 'LISTENING'
         : state;
-  const selectedProvider = aiUsage?.provider || (config?.cloudEnabled ? config.provider : 'ollama');
+  const selectedProvider = aiUsage?.requests
+    ? aiUsage.provider
+    : config?.cloudEnabled
+      ? config.provider
+      : 'ollama';
+  const selectedModel = aiUsage?.requests
+    ? aiUsage.model
+    : selectedProvider === 'gemini'
+      ? config?.geminiModel
+      : selectedProvider === 'openai'
+        ? config?.openaiModel
+        : selectedProvider === 'anthropic'
+          ? config?.anthropicModel
+          : config?.model;
+  const budget = aiUsage?.geminiBudget;
   const currentStep = active?.steps.at(-1);
   const displayMessage = messages.filter((m) => m.role === 'USER' || m.role === 'JARVIS').slice(-2);
   const openSettings = (category: Category | null = null) => {
@@ -839,8 +860,38 @@ export function App() {
             <div className="provider-readout">
               <small>ACTIVE PROVIDER</small>
               <b>{selectedProvider.toUpperCase()}</b>
-              <span>{aiUsage?.model || config?.model || 'UNCONFIGURED'}</span>
+              <span>{selectedModel || 'UNCONFIGURED'}</span>
             </div>
+            {budget && config?.cloudEnabled && config.provider === 'gemini' && (
+              <div
+                className={
+                  'gemini-budget' + (budget.warning || budget.limited ? ' budget-warning' : '')
+                }
+                role="status"
+                aria-live="polite"
+              >
+                <small>JARVIS DAILY BUDGET</small>
+                <b>
+                  {budget.used} / {budget.cap} today
+                </b>
+                <progress
+                  max={budget.cap}
+                  value={budget.used}
+                  aria-label="Gemini daily request budget"
+                />
+                <span>
+                  {budget.limited
+                    ? 'OLLAMA FALLBACK · ' +
+                      (budget.reason === 'google_rate_limit'
+                        ? 'GOOGLE RATE LIMIT'
+                        : 'BUDGET REACHED')
+                    : budget.warning
+                      ? '80% WARNING · OLLAMA AT CAP'
+                      : 'RESETS AT LOCAL MIDNIGHT'}
+                </span>
+                <small>Local safety budget · Google’s quota may differ</small>
+              </div>
+            )}
             <div className="data-strip">
               <span>
                 REQUESTS <b>{aiUsage?.requests ?? 0}</b>
@@ -862,6 +913,11 @@ export function App() {
             <button className="technical-link" onClick={() => openSettings('AI')}>
               CONFIGURE BRAIN ↗
             </button>
+            {grounding && (
+              <button className="technical-link" onClick={() => setGroundingOpen(true)}>
+                GOOGLE RESEARCH SOURCES ↗
+              </button>
+            )}
           </Panel>
           <Panel title="PERCEPTION" code={screenContext?.gaming ? 'GAME' : 'VISION'}>
             <dl className="status-list">
@@ -1176,6 +1232,47 @@ export function App() {
         />
       )}
       {setup && config && <Setup config={config} save={save} close={() => setSetup(false)} />}
+      {groundingOpen && grounding && (
+        <section
+          className="grounding-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Google grounded research"
+        >
+          <header>
+            <h2>GOOGLE GROUNDED RESEARCH</h2>
+            <button aria-label="Close Google research" onClick={() => setGroundingOpen(false)}>
+              ×
+            </button>
+          </header>
+          <p>{grounding.answer}</p>
+          <ol>
+            {grounding.sources.map((source) => (
+              <li key={source.id}>
+                <button
+                  onClick={() =>
+                    void unwrap(window.jarvis!.openResearchSource(source.id)).catch((e) =>
+                      report(String(e)),
+                    )
+                  }
+                >
+                  {source.title}
+                </button>
+              </li>
+            ))}
+          </ol>
+          {grounding.searchHtml && (
+            <iframe
+              title="Google Search suggestions"
+              sandbox="allow-popups"
+              srcDoc={
+                '<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:;"><style>body{margin:0;background:#fff}</style>' +
+                grounding.searchHtml
+              }
+            />
+          )}
+        </section>
+      )}
     </div>
   );
 }

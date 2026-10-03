@@ -196,6 +196,57 @@ async function smoke(win, directory, host) {
       path.join(directory, 'presentation-close-checks.json'),
       JSON.stringify(closeChecks, null, 2),
     );
+    // Synthetic reservations use this isolated profile only, never the owner's ledger.
+    await click('button[aria-label="Hide research workspace"]');
+    await win.webContents.executeJavaScript(
+      `(async()=>{const c=(await window.jarvis.snapshot()).data.config;const result=await window.jarvis.settings({...c,provider:'gemini',cloudEnabled:true,geminiModel:'gemini-3.8-flash',geminiDailyCap:100,tts:false,microphone:false});if(!result.ok)throw Error(result.error)})()`,
+    );
+    host.ai.geminiBudget.data.used = 79;
+    host.ai.geminiBudget.data.warned = false;
+    host.ai.geminiBudget.take();
+    await new Promise((r) => setTimeout(r, 250));
+    const budgetChecks = await win.webContents.executeJavaScript(
+      `({warning:document.querySelector('.gemini-budget')?.textContent.includes('80 / 100 today')&&document.querySelector('.gemini-budget')?.textContent.includes('80% WARNING'),model:document.querySelector('.provider-readout')?.textContent.includes('gemini-3.8-flash')})`,
+    );
+    host.ai.geminiBudget.data.used = 100;
+    host.ai.geminiBudget.notify();
+    await new Promise((r) => setTimeout(r, 250));
+    budgetChecks.capped = await win.webContents.executeJavaScript(
+      `document.querySelector('.gemini-budget')?.textContent.includes('100 / 100 today')&&document.querySelector('.gemini-budget')?.textContent.includes('OLLAMA FALLBACK')`,
+    );
+    await win.webContents.executeJavaScript(
+      `(async()=>{const c=(await window.jarvis.snapshot()).data.config;await window.jarvis.settings({...c,geminiDailyCap:125})})()`,
+    );
+    await new Promise((r) => setTimeout(r, 250));
+    budgetChecks.edit = await win.webContents.executeJavaScript(
+      `document.querySelector('.gemini-budget')?.textContent.includes('100 / 125 today')&&!document.querySelector('.gemini-budget')?.textContent.includes('BUDGET REACHED')`,
+    );
+    host.emit('google-grounding', {
+      answer: 'Synthetic sourced integration fixture.',
+      sources: [],
+      allowedLinks: ['https://www.google.com/search?q=fixture'],
+      searchHtml:
+        '<style>.search{color:black}</style><div class="search"><a href="https://www.google.com/search?q=fixture">Google Search fixture</a></div>',
+    });
+    await new Promise((r) => setTimeout(r, 250));
+    await win.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('GOOGLE RESEARCH SOURCES')).click()`,
+    );
+    await new Promise((r) => setTimeout(r, 250));
+    budgetChecks.grounding = await win.webContents.executeJavaScript(
+      `!!document.querySelector('iframe[title="Google Search suggestions"]') && document.querySelector('iframe').getAttribute('sandbox')==='allow-popups'`,
+    );
+    await click('button[aria-label="Close Google research"]');
+    for (const [name, valid] of Object.entries(budgetChecks))
+      if (!valid) throw Error('Gemini runtime check failed: ' + name);
+    fs.writeFileSync(
+      path.join(directory, 'gemini-budget-checks.json'),
+      JSON.stringify(budgetChecks, null, 2),
+    );
+    fs.writeFileSync(
+      path.join(directory, 'gemini-budget.png'),
+      (await win.webContents.capturePage()).toPNG(),
+    );
   }
 }
 module.exports = { smoke };

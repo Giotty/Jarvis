@@ -967,7 +967,7 @@ class Executor {
       case 'web_search':
         return this.host.research.research(p.query, signal, p.topic, p.queries);
       case 'find_images':
-        return this.host.research.research(p.query + ' images', signal);
+        return this.host.research.research(p.query + ' images', signal, 'images');
       case 'present_briefing':
         return this.host.briefing.present(p);
       case 'get_weather':

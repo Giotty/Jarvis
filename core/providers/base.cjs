@@ -57,11 +57,13 @@ class AIProvider {
       signal?.throwIfAborted();
       throw new ProviderError(timeout.aborted ? 'timeout' : 'network');
     }
-    if (!response.ok)
+    if (!response.ok) {
+      if (response.status === 429 && this.rateLimited) await this.rateLimited(response);
       throw new ProviderError(
         'http_' + response.status,
         response.status === 429 || response.status >= 500,
       );
+    }
     return response;
   }
   key() {

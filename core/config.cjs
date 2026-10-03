@@ -23,6 +23,8 @@ const schema = z
     anthropicModel: z.string().max(200).default(''),
     geminiModel: z.string().max(200).default(''),
     geminiVisionModel: z.string().max(200).default(''),
+    geminiDailyCap: z.number().int().min(1).max(100000).default(100),
+    geminiGrounding: z.boolean().default(true),
     providerCapabilities: z
       .record(
         z.array(z.enum(['TEXT', 'VISION', 'TOOLS', 'STRUCTURED_OUTPUT', 'STREAMING', 'REASONING'])),

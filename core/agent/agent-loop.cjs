@@ -202,7 +202,9 @@ class AgentLoop {
             if (!this.cancelled) this.emit('reply-chunk', chunk);
           },
           {
-            manualVision: false,
+            manualVision: this.active.steps.some(
+              (s) => ['observe_screen', 'analyze_screen'].includes(s.tool) && s.result?.success,
+            ),
             // Let the local model answer without tools when local preference is on.
             // Tool continuations then use the configured primary brain; no phrase classification.
             simple: this.active.steps.length === 0,

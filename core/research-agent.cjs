@@ -256,16 +256,58 @@ function watchMetadata(html) {
   };
 }
 class ResearchAgent {
-  constructor({ get = webGet } = {}) {
+  constructor({ get = webGet, ground, emit = () => {} } = {}) {
     this.results = new Map();
     this.images = new Map();
     this.imageCache = new Map();
     this.get = get;
+    this.ground = ground;
+    this.emit = emit;
   }
   async research(query, signal, topic = 'general', alternatives = []) {
     const deadline = signal
       ? AbortSignal.any([signal, AbortSignal.timeout(22000)])
       : AbortSignal.timeout(22000);
+    if (this.ground && topic !== 'images') {
+      try {
+        const grounded = await this.ground(
+          query,
+          AbortSignal.any([deadline, AbortSignal.timeout(12000)]),
+        );
+        if (grounded.success && grounded.sources.length) {
+          const sources = await Promise.all(
+            grounded.sources.slice(0, 6).map(async (source) => {
+              try {
+                const page = await this.page(source.url, deadline, query);
+                return {
+                  ...source,
+                  ...page,
+                  groundedSegments: source.text,
+                  grounded: true,
+                  readable: !!page.text && page.text.length >= 200,
+                };
+              } catch {
+                signal?.throwIfAborted();
+                return source;
+              }
+            }),
+          );
+          this.emit('google-grounding', grounded.googleGrounding);
+          for (const source of sources) this.results.set(source.id, source);
+          while (this.results.size > 72) this.results.delete(this.results.keys().next().value);
+          return {
+            ...grounded,
+            sources,
+            results: sources.map(({ id, title, url }) => ({ id, title, url })),
+            verified: true,
+            message:
+              'Google Search grounded research completed in the background. Answer from cited evidence with source links. Google-grounded segments and independently read pages are distinguished; do not claim blocked pages were read or treat retrieval time as publication time.',
+          };
+        }
+      } catch {
+        signal?.throwIfAborted(); /* Quota/unavailability falls back to free public research. */
+      }
+    }
     const found = await this.search(
       topic === 'video' ? query + ' YouTube' : query,
       deadline,

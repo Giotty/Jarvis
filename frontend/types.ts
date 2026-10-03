@@ -17,6 +17,8 @@ export type Config = {
   anthropicModel: string;
   geminiModel: string;
   geminiVisionModel: string;
+  geminiDailyCap: number;
+  geminiGrounding: boolean;
   providerCapabilities: Record<string, string[]>;
   agentMaxSteps: number;
   agentRetries: number;
@@ -129,6 +131,16 @@ export type Plugin = {
   }[];
 };
 export type AIUsage = {
+  geminiBudget?: {
+    day: string;
+    used: number;
+    cap: number;
+    percent: number;
+    warning: boolean;
+    limited: boolean;
+    reason: string;
+    resetAt: number;
+  };
   requests: number;
   cloudRequests: number;
   inputTokens: number;
@@ -136,6 +148,11 @@ export type AIUsage = {
   provider: ProviderID;
   model: string;
   processing: 'CLOUD' | 'LOCAL';
+};
+export type GoogleGrounding = {
+  answer: string;
+  searchHtml: string;
+  sources: { id: string; title: string; url: string }[];
 };
 export type Step = {
   tool: string;
@@ -386,6 +403,7 @@ export type JarvisAPI = {
       memories: Memory[];
       screenContext?: ScreenState;
       aiUsage?: AIUsage;
+      googleGrounding?: GoogleGrounding;
       plugins?: Plugin[];
       briefing?: Briefing;
       workspace?: Workspace;

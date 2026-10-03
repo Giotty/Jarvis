@@ -1,4 +1,5 @@
 const { AIProvider, ProviderError, json, sse, calls } = require('./base.cjs');
+const { GeminiBudget } = require('./gemini-budget.cjs');
 function input(messages) {
   const contents = [],
     known = new Map();
@@ -81,6 +82,7 @@ function normalize(response) {
     content,
     tool_calls,
     _native: { gemini: native },
+    ...(candidate.groundingMetadata ? { grounding: candidate.groundingMetadata } : {}),
     usage: {
       input: response.usageMetadata?.promptTokenCount || 0,
       output:
@@ -91,6 +93,25 @@ function normalize(response) {
 }
 class GeminiProvider extends AIProvider {
   id = 'gemini';
+  constructor(options) {
+    super(options);
+    this.budget = options.budget || new GeminiBudget({ config: options.config });
+  }
+  request(url, body, headers, signal) {
+    if (body && /:(?:streamGenerateContent|generateContent)/.test(url)) this.budget.take(signal);
+    return super.request(url, body, headers, signal);
+  }
+  rateLimited(response) {
+    return this.budget.rateLimited(response);
+  }
+  async capabilities(model) {
+    return (
+      this.config().providerCapabilities?.['gemini:' + model] ||
+      (['gemini-2.5-flash', 'gemini-3.8-flash'].includes(model)
+        ? ['TEXT', 'STREAMING', 'TOOLS', 'VISION', 'STRUCTURED_OUTPUT', 'REASONING']
+        : ['TEXT', 'STREAMING'])
+    );
+  }
   headers() {
     return { 'x-goog-api-key': this.key() };
   }
@@ -123,6 +144,8 @@ class GeminiProvider extends AIProvider {
     }
   }
   async chat(messages, tools, vision, signal, onDelta, options = {}) {
+    if (options.grounding && (tools?.length || options.schema))
+      throw new ProviderError('grounding_tool_combination', false);
     const c = this.config(),
       model = (vision && c.geminiVisionModel) || c.geminiModel;
     if (!/^(?:models\/)?[A-Za-z0-9._-]+$/.test(model || ''))
@@ -139,20 +162,28 @@ class GeminiProvider extends AIProvider {
         ],
       },
       contents: input(messages),
-      ...(tools?.length
-        ? {
-            tools: [
-              {
-                functionDeclarations: tools.map(({ function: f }) => {
-                  const { $schema: _schema, ...parametersJsonSchema } = f.parameters;
-                  return { name: f.name, description: f.description, parametersJsonSchema };
-                }),
-              },
-            ],
-          }
-        : {}),
+      ...(options.grounding
+        ? { tools: [{ google_search: {} }] }
+        : tools?.length
+          ? {
+              tools: [
+                {
+                  functionDeclarations: tools.map(({ function: f }) => {
+                    const { $schema: _schema, ...parametersJsonSchema } = f.parameters;
+                    return { name: f.name, description: f.description, parametersJsonSchema };
+                  }),
+                },
+              ],
+            }
+          : {}),
       generationConfig: {
-        maxOutputTokens: 4096,
+        maxOutputTokens: Math.max(1024, options.outputTokens || 4096),
+        ...(model === 'gemini-2.5-flash'
+          ? { thinkingConfig: { thinkingBudget: options.reasoning ? 1024 : 0 } }
+          : {}),
+        ...(model === 'gemini-3.8-flash'
+          ? { thinkingConfig: { thinkingLevel: options.reasoning ? 'HIGH' : 'LOW' } }
+          : {}),
         ...(options.schema
           ? { responseMimeType: 'application/json', responseJsonSchema: options.schema }
           : {}),
@@ -179,12 +210,19 @@ class GeminiProvider extends AIProvider {
         }
         if (candidate?.finishReason) final = { ...final, finishReason: candidate.finishReason };
         if (frame.usageMetadata) final.usageMetadata = frame.usageMetadata;
+        if (candidate?.groundingMetadata) final.groundingMetadata = candidate.groundingMetadata;
       },
       signal,
     );
     if (!final.finishReason) throw new ProviderError('incomplete_stream');
     return normalize({
-      candidates: [{ content: { role: 'model', parts }, finishReason: final.finishReason }],
+      candidates: [
+        {
+          content: { role: 'model', parts },
+          finishReason: final.finishReason,
+          groundingMetadata: final.groundingMetadata,
+        },
+      ],
       usageMetadata: final.usageMetadata,
     });
   }

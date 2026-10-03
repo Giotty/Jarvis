@@ -1,10 +1,10 @@
 # JARVIS — MAATOUK INDUSTRIES
 
-**0.5.2** fixes presentation dismissal and expands relevant background research across public indexes and discovered source links. Direct-launch Ollama recovery and the British male voice are retained. The 0.5.0 update adds a persistent floating research wall, model-selected response modes, narration choreography, user grab locks, staged files, grouping, and a local file/group/workspace library with folders. The circular Maatouk HUD remains unchanged. Voice/text retain shared reasoning, dynamic tools, observation, verification and recovery.
+**0.5.3** adds Gemini 3.8 Flash chat and requested vision, background web research, and a persistent configurable daily safety budget. At 80% it warns; at 100% it switches to Ollama. The counter resets at local midnight. HUD, presentation controls and the British male voice are retained.
 
 ## Launch
 
-Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.5.2.exe`.
+Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.5.3.exe`.
 
 The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **Kokoro bm_daniel** British male speech. Piper/Windows voices remain supported. Windows currently exposes **no recording endpoint**: connect/enable a microphone and choose it in radial VOICE settings.
 

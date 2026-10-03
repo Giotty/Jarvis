@@ -87,6 +87,7 @@ let win,
   briefing,
   workspace,
   librarySafety = new Safety(),
+  latestGrounding = null,
   lastStats = {},
   state = 'IDLE',
   statsBusy = false;
@@ -99,6 +100,7 @@ if (smokeArg) {
 }
 const emit = (type, data) => {
   if (type === 'state') state = data;
+  if (type === 'google-grounding') latestGrounding = data;
   if (type === 'confirmation' && data && win) win.show();
   if (win && !win.isDestroyed()) win.webContents.send('jarvis:event', { type, data });
 };
@@ -162,6 +164,7 @@ function saveConfig(next) {
   )
     emit('reply', 'Push-to-talk shortcut could not be registered.');
   emit('config', config);
+  ai?.geminiBudget.notify();
   void registry?.reconcile();
   if (config.microphone) void speech?.prepare().catch(() => {});
   if (config.tts && config.ttsEngine !== 'windows')
@@ -281,7 +284,8 @@ function handlers() {
     stats: lastStats.time ? lastStats : null,
     state,
     models: await ai.models(),
-    aiUsage: { ...ai.usage },
+    aiUsage: ai.usageSnapshot(),
+    googleGrounding: latestGrounding,
     plugins: registry.list(),
     tasks: store.tasks(),
     memories: store.memories(),
@@ -429,7 +433,8 @@ function handlers() {
     const source =
       briefing.sources.get(selected) ||
       briefing.last?.sources.find((s) => s.id === selected) ||
-      workspace?.current?.sources.find((s) => s.id === selected);
+      workspace?.current?.sources.find((s) => s.id === selected) ||
+      latestGrounding?.sources.find((s) => s.id === selected);
     if (!source) throw Error('Research source expired.');
     return shell.openExternal(source.url);
   });
@@ -603,7 +608,13 @@ async function init() {
   store = await new Store().init(dir);
   ollama = new Ollama(() => config);
   secrets = new SecretStore(dir, safeStorage);
-  ai = new ProviderRouter({ config: () => config, secrets, local: ollama, emit });
+  ai = new ProviderRouter({
+    config: () => config,
+    secrets,
+    local: ollama,
+    emit,
+    budgetDirectory: dir,
+  });
   const safety = new Safety();
   const library = new ResearchLibrary(path.join(dir, 'Research'), () =>
     emit('research-library', true),
@@ -686,7 +697,10 @@ async function init() {
     emit,
   });
   browserForDiagnostics = browser;
-  const research = new ResearchAgent();
+  const research = new ResearchAgent({
+    ground: (query, signal) => ai.groundedResearch(query, signal),
+    emit,
+  });
   const discoveredGames = [];
   screenContext = new ScreenContext({
     isAssistant: (window) => window.pid === process.pid,
@@ -907,7 +921,12 @@ async function init() {
       autoplayPolicy: 'no-user-gesture-required',
     },
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    // Sandboxed Google search suggestions contain only validated HTTPS links.
+    if (config.browser && latestGrounding?.allowedLinks.includes(url))
+      void shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
+  });
   win.webContents.on('render-process-gone', () => workspace.releaseLocks());
   win.on('hide', () => workspace.releaseLocks());
   win.on('closed', () => workspace.releaseLocks());
@@ -946,8 +965,15 @@ async function init() {
   );
   tray.on('double-click', () => win.show());
   saveConfig(config);
-  void ollama.warm().catch(() => {});
+  if (!config.cloudEnabled || config.provider === 'ollama' || ai.geminiBudget.snapshot().limited)
+    void ollama.warm().catch(() => {});
   const sample = async () => {
+    if (
+      ai &&
+      ai.geminiBudget.data.day !==
+        require('../core/providers/gemini-budget.cjs').localDay(new Date())
+    )
+      ai.geminiBudget.notify();
     if (statsBusy || agent?.busy || speech?.pending || speaker?.pending) return;
     statsBusy = true;
     try {
@@ -971,7 +997,13 @@ async function init() {
     fs.writeFileSync(path.join(dir, 'smoke-result.json'), JSON.stringify(result, null, 2));
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(path.join(dir, 'hud.png'), shot.toPNG());
-    await require('../core/runtime-smoke.cjs').smoke(win, dir, { workspace, briefing, agent });
+    await require('../core/runtime-smoke.cjs').smoke(win, dir, {
+      workspace,
+      briefing,
+      agent,
+      ai,
+      emit,
+    });
     quitting = true;
     app.quit();
   }

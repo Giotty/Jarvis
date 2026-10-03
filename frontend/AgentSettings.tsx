@@ -137,7 +137,10 @@ export function ProviderSettings({
     caps =
       editing === 'ollama'
         ? localCaps
-        : draft.providerCapabilities[capKey] || ['TEXT', 'STREAMING'];
+        : draft.providerCapabilities[capKey] ||
+          (editing === 'gemini' && ['gemini-2.5-flash', 'gemini-3.8-flash'].includes(model)
+            ? capabilities
+            : ['TEXT', 'STREAMING']);
   useEffect(() => {
     let active = true;
     if (editing === 'ollama' && model && window.jarvis)
@@ -277,6 +280,7 @@ export function ProviderSettings({
               'providerTimeout',
               'agentTaskTimeout',
               'cloudRequestLimit',
+              'geminiDailyCap',
             ] as (keyof Config)[]
           ).map((key) => (
             <label className="setting-row" key={key}>
@@ -289,18 +293,27 @@ export function ProviderSettings({
                       toolTimeout: 'Tool timeout / ms',
                       providerTimeout: 'AI timeout / ms',
                       agentTaskTimeout: 'Task timeout / ms',
-                      cloudRequestLimit: 'Cloud request limit',
+                      cloudRequestLimit: 'Cloud session request limit (0 = off)',
+                      geminiDailyCap: 'JARVIS Gemini requests / day',
                     } as Record<string, string>
                   )[key]
                 }
               </span>
               <input
                 type="number"
+                min={key === 'geminiDailyCap' ? 1 : undefined}
+                max={key === 'geminiDailyCap' ? 100000 : undefined}
+                step={1}
                 value={Number(draft[key])}
                 onChange={(e) => update(key, Number(e.target.value))}
               />
             </label>
           ))}
+          <p className="help">
+            Gemini's daily cap is JARVIS's own safety budget, not Google's quota. Warning at 80%;
+            Ollama takes over at 100%. Resets at local midnight. Request attempts count, including
+            research and vision.
+          </p>
         </>
       )}
       {page === 4 && (
@@ -318,6 +331,7 @@ export function ProviderSettings({
           ))}
           {toggle('parallelTools', 'Parallel independent reads')}
           {toggle('automaticRecovery', 'Bounded failure recovery')}
+          {toggle('geminiGrounding', 'Google Search grounding / research')}
           {field('openaiUrl', 'OpenAI compatible API base')}
         </>
       )}

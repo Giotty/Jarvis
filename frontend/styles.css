@@ -680,6 +680,57 @@ small,
   flex-direction: column;
   gap: 5px;
 }
+.gemini-budget {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  color: #9bdce8;
+  font-size: 10px;
+}
+.gemini-budget small,
+.gemini-budget span {
+  font-size: 8px;
+}
+.gemini-budget progress {
+  width: 100%;
+  height: 4px;
+  accent-color: #53d4f0;
+}
+.gemini-budget.budget-warning {
+  color: #ffc878;
+}
+.gemini-budget.budget-warning progress {
+  accent-color: #ffc878;
+}
+.grounding-dialog {
+  position: fixed;
+  z-index: 100;
+  inset: 15% 20%;
+  padding: 20px;
+  overflow: auto;
+  background: #06121b;
+  border: 1px solid #44a6be;
+  box-shadow: 0 0 0 100vmax #000a;
+}
+.grounding-dialog header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.grounding-dialog h2 {
+  font-size: 14px;
+}
+.grounding-dialog p {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.grounding-dialog iframe {
+  width: 100%;
+  height: 180px;
+  border: 0;
+  background: white;
+}
 .provider-readout small {
   font-size: 7px;
   letter-spacing: 0.16em;
