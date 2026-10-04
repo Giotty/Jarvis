@@ -18,6 +18,7 @@ auth.json
 logs/
 screenshots/
 models/
+.tools/
 *.log
 *.wav
 *.webm

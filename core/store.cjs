@@ -43,17 +43,25 @@ class Store {
     if (id)
       this.db.run('UPDATE memory SET category=?,content=? WHERE id=?', [category, content, id]);
     else this.db.run('INSERT INTO memory(category,content) VALUES(?,?)', [category, content]);
+    if (id) this.invalidateVector(id);
     this.save();
     return this.memories();
   }
   forget(id) {
     this.db.run('DELETE FROM memory WHERE id=?', [id]);
+    this.invalidateVector(id);
     this.save();
     return this.memories();
   }
   clear() {
     this.db.run('DELETE FROM memory');
+    if (this.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='vectors'").length)
+      this.db.run("DELETE FROM vectors WHERE kind='memory'");
     this.save();
+  }
+  invalidateVector(id) {
+    if (this.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='vectors'").length)
+      this.db.run("DELETE FROM vectors WHERE kind='memory' AND id=?", [String(id)]);
   }
   task(task) {
     const safe = {

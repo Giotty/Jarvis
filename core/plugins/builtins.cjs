@@ -134,19 +134,39 @@ function builtins(executor, store, emit) {
             name === 'read_clipboard'
               ? 'clipboard'
               : [
-                    'read_file',
-                    'search_files',
-                    'list_directory',
-                    'list_drives',
-                    'workspace_list',
-                    'workspace_library',
-                    'workspace_open',
+                    'analyze_screen',
+                    'capture_screen',
+                    'read_visible_text',
+                    'list_ui_elements',
+                    'get_foreground_window',
+                    'list_windows',
                   ].includes(name)
-                ? 'files'
-                : name === 'run_powershell'
-                  ? 'external'
-                  : undefined,
-          validate: (args) => validate({ tool: name, args }),
+                ? 'screen'
+                : [
+                      'read_file',
+                      'search_files',
+                      'list_directory',
+                      'list_drives',
+                      'workspace_list',
+                      'workspace_library',
+                      'workspace_open',
+                    ].includes(name)
+                  ? 'files'
+                  : name === 'run_powershell'
+                    ? 'external'
+                    : undefined,
+          validate: (args) => ({
+            ...validate({ tool: name, args }),
+            ...(['workspace_list'].includes(name)
+              ? {
+                  privacy:
+                    executor.host?.workspace?.current?.fromLibrary ||
+                    executor.host?.workspace?.current?.savedId
+                      ? 'files'
+                      : undefined,
+                }
+              : {}),
+          }),
           execute: (action, signal) => executor.executeResult(action, signal),
           prepare: ['click_control', 'click_visible_target', 'navigate_ui'].includes(name)
             ? (action, signal, goal) => executor.prepare(action, signal, goal)
@@ -169,16 +189,21 @@ function builtins(executor, store, emit) {
         permissions: [],
         risk: 0,
         parallelSafe: true,
-        execute: async ({ args }) => ({
-          success: true,
-          verified: true,
-          observed_result: store
-            .memories()
-            .filter(
-              (m) => !args.query || m.content.toLowerCase().includes(args.query.toLowerCase()),
-            )
-            .slice(0, 15),
-        }),
+        privacy: 'memory',
+        execute: async ({ args }, signal) =>
+          executor.host.semanticMemory
+            ? executor.host.semanticMemory.retrieve(args.query, signal)
+            : {
+                success: true,
+                verified: true,
+                observed_result: store
+                  .memories()
+                  .filter(
+                    (m) =>
+                      !args.query || m.content.toLowerCase().includes(args.query.toLowerCase()),
+                  )
+                  .slice(0, 15),
+              },
       });
       for (const name of ['memory_update', 'memory_delete'])
         plugin.tools.push({

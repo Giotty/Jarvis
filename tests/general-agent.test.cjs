@@ -62,6 +62,53 @@ let id = 0;
 const call = (name, args = {}) => ({ id: 'call-' + ++id, function: { name, arguments: args } });
 const action = (...tool_calls) => ({ role: 'assistant', content: '', tool_calls });
 
+test('Structured screen tasks observe the screen before considering public research', async () => {
+  const s = setup({ cloudScreen: true, cloudVision: 'manual' });
+  let invocations = 0;
+  s.ai.beginTask = async () => ({
+    vision: true,
+    research: false,
+    pcControl: false,
+    complexity: 'simple',
+    privacy: 'public',
+  });
+  s.ai.chat = async (_messages, tools) => {
+    invocations++;
+    if (invocations === 1) {
+      assert.ok(tools.some((t) => t.function.name === 'analyze_screen'));
+      assert.ok(!tools.some((t) => t.function.name === 'web_search'));
+      return action(call('analyze_screen'));
+    }
+    assert.equal(tools.length, 0, 'A verified pure screen description must not repeat observation');
+    return answer('The observed screen contains an application window.');
+  };
+  await s.agent.command('Describe the current screen');
+  assert.equal(s.executed[0].tool, 'analyze_screen');
+  assert.equal(s.agent.backgroundOnly, false);
+  assert.equal(s.agent.active.status, 'completed');
+});
+
+test('Current research rejects an invented older season while historical research preserves it', async () => {
+  for (const timeframe of ['current', 'historical']) {
+    const s = setup();
+    s.ai.beginTask = async () => ({ research: true, timeframe, pcControl: false, vision: false });
+    s.replies.push(
+      action(call('web_search', { query: 'team lineup 2024-25' })),
+      answer('Sourced result.'),
+    );
+    await s.agent.command(
+      timeframe === 'current'
+        ? 'Research the current team lineup'
+        : 'Research the 2024-25 team lineup',
+    );
+    const query = s.executed.find((a) => a.tool === 'web_search').args.query;
+    if (timeframe === 'current') {
+      assert.ok(!query.includes('2024-25'));
+      assert.ok(query.includes(String(new Date().getFullYear())));
+    } else assert.ok(query.includes('2024-25'));
+  }
+});
+
 test('background research rejects browser/screen fallbacks, including same-batch actions, and resets for the next desktop request', async () => {
   const s = setup();
   s.replies.push(

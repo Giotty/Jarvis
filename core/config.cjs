@@ -4,9 +4,79 @@ const schema = z
     setupComplete: z.boolean().default(false),
     mock: z.boolean().default(false),
     weatherLocation: z.string().trim().max(200).default(''),
-    provider: z.enum(['ollama', 'openai', 'anthropic', 'gemini']).default('ollama'),
-    fallbackProvider: z.enum(['none', 'ollama', 'openai', 'anthropic', 'gemini']).default('ollama'),
-    visionProvider: z.enum(['auto', 'ollama', 'openai', 'anthropic', 'gemini']).default('auto'),
+    provider: z
+      .enum(['ollama', 'openai', 'anthropic', 'gemini', 'nvidia', 'nim'])
+      .default('ollama'),
+    fallbackProvider: z
+      .enum(['none', 'ollama', 'openai', 'anthropic', 'gemini', 'nvidia', 'nim'])
+      .default('ollama'),
+    visionProvider: z
+      .enum(['auto', 'ollama', 'openai', 'anthropic', 'gemini', 'nvidia', 'nim'])
+      .default('auto'),
+    routerMode: z
+      .enum([
+        'auto',
+        'force-model',
+        'prefer-speed',
+        'prefer-quality',
+        'local-only',
+        'free-cloud-local',
+        'privacy',
+      ])
+      .default('force-model'),
+    freeOnly: z.boolean().default(true),
+    providerPriority: z
+      .array(z.enum(['nvidia', 'gemini', 'ollama', 'nim', 'openai', 'anthropic']))
+      .min(1)
+      .max(6)
+      .default(['nvidia', 'gemini', 'ollama']),
+    nvidiaModel: z.string().max(200).default('moonshotai/kimi-k3'),
+    nvidiaVisionModel: z.string().max(200).default('deepseek-ai/deepseek-v4.1-flash'),
+    nvidiaFastModel: z.string().max(200).default('nvidia/nemotron-3.5-lightning-30b-a3b'),
+    nvidiaDeepModel: z.string().max(200).default('nvidia/nemotron-3-ultra-550b-a55b'),
+    nvidiaFallbackModels: z
+      .array(z.string().max(200))
+      .max(8)
+      .default(['z-ai/glm-5.3-flash', 'meta/muse-glimmer-30b']),
+    nvidiaDailyCap: z.number().int().min(1).max(10000).default(100),
+    nvidiaFreeEndpoint: z.boolean().default(true),
+    nimEnabled: z.boolean().default(false),
+    nimOcrEnabled: z.boolean().default(false),
+    nimOcrUrl: z
+      .string()
+      .url()
+      .refine((v) => {
+        const u = new URL(v);
+        return (
+          ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname) &&
+          !u.username &&
+          !u.password &&
+          ['http:', 'https:'].includes(u.protocol)
+        );
+      })
+      .default('http://127.0.0.1:8001'),
+    nimUrl: z
+      .string()
+      .url()
+      .refine((v) => {
+        const u = new URL(v);
+        return (
+          ['http:', 'https:'].includes(u.protocol) &&
+          ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname) &&
+          !u.username &&
+          !u.password
+        );
+      })
+      .default('http://127.0.0.1:8000/v1'),
+    nimModel: z.string().max(200).default('nvidia/cosmos3-nano-reasoner'),
+    cloudMemory: z.boolean().default(false),
+    embeddingModel: z.string().max(200).default('all-minilm:l6-v2'),
+    embeddingProvider: z.enum(['ollama', 'nim']).default('ollama'),
+    blenderPath: z.string().max(1000).default(''),
+    blenderEnabled: z.boolean().default(true),
+    blenderIterations: z.number().int().min(1).max(5).default(3),
+    blenderTimeout: z.number().int().min(5000).max(300000).default(90000),
+    preview3dFps: z.number().int().min(1).max(60).default(30),
     cloudEnabled: z.boolean().default(false),
     preferLocalSimple: z.boolean().default(false),
     cloudVision: z.enum(['disabled', 'manual', 'when-needed']).default('disabled'),
@@ -24,7 +94,7 @@ const schema = z
     geminiModel: z.string().max(200).default(''),
     geminiVisionModel: z.string().max(200).default(''),
     geminiDailyCap: z.number().int().min(1).max(100000).default(100),
-    geminiGrounding: z.boolean().default(true),
+    geminiGrounding: z.boolean().default(false),
     providerCapabilities: z
       .record(
         z.array(z.enum(['TEXT', 'VISION', 'TOOLS', 'STRUCTURED_OUTPUT', 'STREAMING', 'REASONING'])),

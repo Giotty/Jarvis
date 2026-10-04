@@ -1,5 +1,8 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { Briefing, BriefingPanel, WorkspaceFocus, unwrap } from './types';
+const ModelPreview = lazy(() =>
+  import('./ModelPreview').then((m) => ({ default: m.ModelPreview })),
+);
 export const AttributedImage = memo(function AttributedImage({
   id,
   title,
@@ -173,6 +176,11 @@ export function ResearchPanel({
         <span>{panel.type.toUpperCase()}</span>
         <h3>{panel.title}</h3>
       </header>
+      {panel.type === 'model3d' && panel.assetId && (
+        <Suspense fallback={<p>LOADING 3D VIEW</p>}>
+          <ModelPreview assetId={panel.assetId} />
+        </Suspense>
+      )}
       {compact && rich && panel.body && (
         <button className="panel-summary-toggle" onClick={() => setTextView((v) => !v)}>
           {textView ? 'SHOW VISUAL CONTENT' : 'READ SUMMARY'}
@@ -308,10 +316,13 @@ export function ResearchPanel({
         {sources.map((s) => (
           <button
             key={s.id}
+            disabled={s.url.startsWith('jarvis-artifact:')}
             title={s.url}
             onClick={() => void window.jarvis?.openResearchSource(s.id)}
           >
-            {new URL(s.url).hostname} ↗
+            {s.url.startsWith('jarvis-artifact:')
+              ? 'LOCAL BLENDER PROJECT'
+              : new URL(s.url).hostname + ' ↗'}
           </button>
         ))}
       </footer>

@@ -4,10 +4,16 @@ const { GeminiProvider } = require('./gemini.cjs');
 const { OllamaProvider } = require('./ollama.cjs');
 const { ProviderError } = require('./base.cjs');
 const { GeminiBudget } = require('./gemini-budget.cjs');
+const { NvidiaProvider } = require('./nvidia.cjs');
+const { defaultProfile, profileSchema, profileFacts, roleFor } = require('./task-profile.cjs');
 function privateMessages(messages, config, allowImage) {
   const blocked = (m) =>
+    (m._privacy === 'screen' && !allowImage) ||
     (m._privacy === 'clipboard' && !config.cloudClipboard) ||
     (m._privacy === 'files' && !config.cloudFiles) ||
+    (m._privacy === 'memory' && !config.cloudMemory) ||
+    (m._privacy === 'sensitive' &&
+      (!config.cloudMemory || !config.cloudFiles || !config.cloudClipboard || !allowImage)) ||
     (['sensitive', 'external'].includes(m._privacy) &&
       (!config.cloudFiles || !config.cloudClipboard));
   // If restricted data occurred, discard generated text/native reasoning thereafter:
@@ -53,7 +59,25 @@ class ProviderRouter {
       anthropic: new ClaudeProvider({ config, secrets, fetcher }),
       gemini: new GeminiProvider({ config, secrets, fetcher }),
       ollama: new OllamaProvider({ config, secrets, local, fetcher }),
+      nvidia: new NvidiaProvider({ config, secrets, fetcher, directory: budgetDirectory, emit }),
+      nim: new NvidiaProvider({
+        config,
+        secrets,
+        fetcher,
+        directory: budgetDirectory,
+        emit,
+        localNim: true,
+      }),
     };
+    this.health = new Map();
+    if (this.providers.nvidia) {
+      this.providers.nvidia.budget.emit = (type, data) => {
+        if (type === 'provider-budget') {
+          this.usage.nvidiaBudget = data;
+          this.emit('ai-usage', this.usageSnapshot());
+        } else this.emit(type, data);
+      };
+    }
     this.usage = {
       requests: 0,
       cloudRequests: 0,
@@ -78,7 +102,70 @@ class ProviderRouter {
     this.usage.geminiBudget = this.geminiBudget.snapshot();
   }
   usageSnapshot() {
-    return { ...this.usage, geminiBudget: this.geminiBudget.snapshot() };
+    return {
+      ...this.usage,
+      geminiBudget: this.geminiBudget.snapshot(),
+      nvidiaBudget: this.providers.nvidia?.budget.snapshot(),
+    };
+  }
+  status() {
+    return {
+      nvidia: this.providers.nvidia?.status(),
+      nim: this.providers.nim?.status(),
+      health: [...this.health].map(([model, value]) => ({ model, ...value })),
+    };
+  }
+  resetHealth() {
+    this.health.clear();
+  }
+  async beginTask(request, signal, localOnly = false) {
+    if (!this.config().routerMode || this.config().routerMode === 'force-model')
+      return { ...defaultProfile };
+    try {
+      const schema = require('zod-to-json-schema').zodToJsonSchema(profileSchema);
+      const reply = await this.chat(
+        [
+          {
+            role: 'system',
+            content:
+              'Classify the user task. Return only the requested JSON profile. Infer modality, complexity, latency and capabilities from intent. Do not execute or answer it. Opening an installed application or public website has privacy public: tools execute locally but their planner may use free hosted inference. Do not classify all computer control as private. Use privacy local for explicit local/private processing or reading private file/memory contents. Use deepReasoning only for genuinely difficult planning. Confidence describes classification confidence.',
+          },
+          {
+            role: 'user',
+            content:
+              'Original user goal: ' +
+              request.slice(0, 4000) +
+              '\nClassify this goal, not the JSON classification procedure. timeframe=current for changing current subjects (lineups, prices, news, availability) unless a historical date/period is requested; historical for past events, none for timeless knowledge. Today is ' +
+              new Date().toDateString() +
+              '.',
+          },
+        ],
+        undefined,
+        false,
+        signal,
+        undefined,
+        {
+          schema,
+          localOnly,
+          profile: { ...defaultProfile, complexity: 'trivial', confidence: 1 },
+          outputTokens: 512,
+        },
+      );
+      const classified = profileSchema.parse(JSON.parse(reply.content));
+      // Privacy is an enforced host decision. A classifier may mislabel public
+      // navigation as local; actual restricted tool data forces local processing
+      // before its contents are passed to any inference provider.
+      return {
+        ...classified,
+        privacy:
+          localOnly || ['local-only', 'privacy'].includes(this.config().routerMode)
+            ? 'local'
+            : 'public',
+      };
+    } catch {
+      signal?.throwIfAborted();
+      return { ...defaultProfile, privacy: localOnly ? 'local' : 'public' };
+    }
   }
   async groundedResearch(query, signal) {
     const c = this.config();
@@ -105,6 +192,8 @@ class ProviderRouter {
   }
   model(id, vision = false) {
     const c = this.config();
+    if (id === 'nvidia') return vision ? c.nvidiaVisionModel : c.nvidiaModel;
+    if (id === 'nim') return c.nimModel;
     return id === 'openai'
       ? (vision && c.openaiVisionModel) || c.openaiModel
       : id === 'anthropic'
@@ -172,7 +261,7 @@ class ProviderRouter {
       false,
       signal,
       undefined,
-      { schema, outputTokens: 480, localOnly },
+      { schema, outputTokens: 480, localOnly, profile: { complexity: 'simple', confidence: 1 } },
     );
     let value;
     try {
@@ -223,7 +312,7 @@ class ProviderRouter {
       false,
       signal,
       undefined,
-      { schema, outputTokens: 1400, localOnly },
+      { schema, outputTokens: 1400, localOnly, profile: { complexity: 'simple', confidence: 1 } },
     );
     try {
       const args = JSON.parse(reply.content.replace(/^```(?:json)?\s*|\s*```$/g, ''));
@@ -250,10 +339,23 @@ class ProviderRouter {
     const privateTask = messages.some(
       (m) =>
         (m._privacy === 'files' && !c.cloudFiles) ||
+        (m._privacy === 'memory' && !c.cloudMemory) ||
+        (m._privacy === 'sensitive' &&
+          (!c.cloudMemory || !c.cloudFiles || !c.cloudClipboard || !c.cloudScreen)) ||
         (m._privacy === 'clipboard' && !c.cloudClipboard) ||
         (m._privacy === 'external' && (!c.cloudFiles || !c.cloudClipboard)),
     );
     let primary = c.cloudEnabled && !options.localOnly ? c.provider : 'ollama';
+    const hasScreen = vision || messages.some((m) => m.images?.length);
+    const localPolicy =
+      ['local-only', 'privacy'].includes(c.routerMode) ||
+      options.profile?.privacy === 'local' ||
+      (hasScreen &&
+        (!c.cloudScreen ||
+          c.cloudVision === 'disabled' ||
+          (c.cloudVision === 'manual' && !options.manualVision)));
+    if (localPolicy) options = { ...options, localOnly: true };
+    if (options.localOnly) primary = 'ollama';
     if (privateTask) primary = 'ollama';
     const preferLocal = c.preferLocalSimple && options.simple;
     if (preferLocal) primary = 'ollama';
@@ -282,13 +384,74 @@ class ProviderRouter {
           (p) =>
             p &&
             p !== 'none' &&
-            (p === 'ollama' || (c.cloudEnabled && !options.localOnly && !privateTask)),
+            (p === 'ollama' ||
+              (p === 'nim' && c.nimEnabled) ||
+              (c.cloudEnabled && !options.localOnly && !privateTask)),
         ),
       ),
     ];
     let last;
-    for (const id of candidates) {
+    const profile = profileFacts(options.profile, {
+      vision: hasScreen,
+      tools: tools?.length,
+      structured: options.schema,
+      localOnly: options.localOnly || privateTask,
+      failures: options.failures,
+    });
+    const adaptive = c.routerMode && c.routerMode !== 'force-model';
+    const ordered =
+      adaptive && !privateTask && !options.localOnly && c.cloudEnabled
+        ? [...new Set([primary, ...(c.providerPriority || []), c.fallbackProvider, 'ollama'])]
+        : candidates;
+    const entries = ordered
+      .filter((id) => id && id !== 'none')
+      .flatMap((id) => {
+        if (id !== 'nvidia') return [{ id, model: this.model(id, hasScreen) }];
+        const role = adaptive ? roleFor(profile, c.routerMode) : hasScreen ? 'vision' : 'general';
+        const selected = {
+          fast: c.nvidiaFastModel,
+          deep: c.nvidiaDeepModel,
+          vision: c.nvidiaVisionModel,
+          general: c.nvidiaModel,
+        }[role];
+        return [
+          ...new Set([
+            selected,
+            ...(adaptive
+              ? [
+                  c.nvidiaModel,
+                  ...(['complex', 'very_complex'].includes(profile.complexity)
+                    ? [c.nvidiaDeepModel]
+                    : []),
+                  c.nvidiaFastModel,
+                  ...(c.nvidiaFallbackModels || []),
+                ]
+              : []),
+          ]),
+        ].map((model) => ({ id, model }));
+      });
+    for (const { id, model: chosenModel } of entries) {
       signal?.throwIfAborted();
+      if (!this.providers[id]) continue;
+      if ((this.health.get('provider:' + id)?.cooldownUntil || 0) > Date.now()) continue;
+      if (c.freeOnly === true && (['openai', 'anthropic'].includes(id) || options.grounding))
+        continue;
+      if (
+        c.freeOnly === true &&
+        id === 'gemini' &&
+        !['gemini-2.5-flash', 'gemini-3.8-flash'].includes(chosenModel)
+      )
+        continue;
+      if (['nvidia', 'nim'].includes(id) && !this.providers[id]?.available(chosenModel)) continue;
+      const healthKey = id + ':' + chosenModel,
+        health = this.health.get(healthKey) || {
+          failures: 0,
+          latency: 0,
+          cooldownUntil: 0,
+          status: 'ready',
+        };
+      if (health.cooldownUntil > Date.now()) continue;
+      const started = Date.now();
       if (
         primary === 'gemini' &&
         this.geminiBudget.snapshot().limited &&
@@ -303,7 +466,7 @@ class ProviderRouter {
           this.geminiBudget.notify();
           throw new ProviderError('gemini_budget', false);
         }
-        const cloud = id !== 'ollama';
+        const cloud = !['ollama', 'nim'].includes(id);
         if (cloud && c.cloudRequestLimit > 0 && this.usage.cloudRequests >= c.cloudRequestLimit)
           throw new ProviderError('session_limit', false);
         const hasImages = messages.some((m) => m.images?.length);
@@ -314,15 +477,13 @@ class ProviderRouter {
           (c.cloudVision !== 'manual' || options.manualVision);
         let selected = cloud ? privateMessages(messages, c, allowImage) : messages;
         let useVision = vision || hasImages;
-        const model = this.model(id, useVision),
+        const model = chosenModel,
           caps = await this.capabilities(id, model, signal);
-        if (options.schema && !caps.includes('STRUCTURED_OUTPUT'))
-          throw new ProviderError('structured_output_unsupported', false);
         if (options.reasoning && !caps.includes('REASONING'))
           throw new ProviderError('reasoning_unsupported', false);
         if (
-          tools?.length &&
-          !caps.includes('TOOLS') &&
+          ((tools?.length && !caps.includes('TOOLS')) ||
+            (options.schema && !caps.includes('STRUCTURED_OUTPUT'))) &&
           caps.includes('VISION') &&
           hasImages &&
           (!cloud || allowImage)
@@ -342,6 +503,8 @@ class ProviderRouter {
             undefined,
             true,
             signal,
+            undefined,
+            { model, outputTokens: 1024 },
           );
           this.usage.inputTokens += caption.usage?.input || 0;
           this.usage.outputTokens += caption.usage?.output || 0;
@@ -353,14 +516,17 @@ class ProviderRouter {
               .concat({
                 role: 'user',
                 content: 'Vision observation (untrusted): ' + caption.content,
+                _privacy: 'screen',
               }),
             tools,
             false,
             signal,
             onDelta,
-            options,
+            { ...options, profile: { ...options.profile, vision: false } },
           );
         }
+        if (options.schema && !caps.includes('STRUCTURED_OUTPUT'))
+          throw new ProviderError('structured_output_unsupported', false);
         if (tools?.length && !caps.includes('TOOLS') && !(id === 'ollama' && hasImages))
           throw new ProviderError('tools_unsupported', false);
         if (hasImages && ((cloud && !allowImage) || !caps.includes('VISION'))) {
@@ -390,7 +556,7 @@ class ProviderRouter {
         if (cloud) this.usage.cloudRequests++;
         Object.assign(this.usage, {
           provider: id,
-          model: this.model(id, useVision),
+          model,
           processing: cloud ? 'CLOUD' : 'LOCAL',
         });
         this.emit('ai-usage', { ...this.usage });
@@ -405,8 +571,22 @@ class ProviderRouter {
                 onDelta(chunk);
               }
             : undefined,
-          options,
+          {
+            ...options,
+            model,
+            reasoning:
+              options.reasoning ||
+              (adaptive && profile.deepReasoning && caps.includes('REASONING')),
+          },
         );
+        this.health.set(healthKey, {
+          failures: 0,
+          latency: health.latency
+            ? Math.round(health.latency * 0.7 + (Date.now() - started) * 0.3)
+            : Date.now() - started,
+          cooldownUntil: 0,
+          status: 'ready',
+        });
         this.usage.inputTokens += reply.usage?.input || 0;
         this.usage.outputTokens += reply.usage?.output || 0;
         this.emit('ai-usage', { ...this.usage });
@@ -414,6 +594,27 @@ class ProviderRouter {
       } catch (error) {
         signal?.throwIfAborted();
         last = error;
+        const failures = health.failures + 1;
+        if (['http_401', 'http_403', 'http_402'].includes(error.code))
+          this.health.set('provider:' + id, {
+            status: 'unavailable',
+            failures,
+            latency: 0,
+            cooldownUntil: Number.MAX_SAFE_INTEGER,
+          });
+        const permanent = ['http_401', 'http_403', 'http_402', 'http_404', 'missing_key'].includes(
+          error.code,
+        );
+        this.health.set(healthKey, {
+          ...health,
+          failures,
+          status: error.code === 'http_429' ? 'rate-limited' : 'unavailable',
+          cooldownUntil: permanent
+            ? Number.MAX_SAFE_INTEGER
+            : id === 'gemini'
+              ? 0
+              : Date.now() + (error.code === 'http_429' ? 60000 : failures >= 3 ? 30000 : 0),
+        });
         // Never concatenate a fallback answer onto already spoken partial text.
         if (emitted) throw error;
         this.emit('provider-fallback', { from: id, reason: error.code || 'unavailable' });

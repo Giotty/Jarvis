@@ -3356,3 +3356,46 @@ small,
 .animations-reduced .memory-wall .floating-file {
   animation: none;
 }
+.model-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 140px;
+  min-width: 0;
+  position: relative;
+}
+.model-canvas {
+  flex: 1;
+  min-height: 120px;
+  overflow: hidden;
+  touch-action: none;
+}
+.model-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.model-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+}
+.model-toolbar small {
+  font-size: 8px;
+  color: var(--cyan);
+}
+.panel-model3d .briefing-body {
+  display: none;
+}
+.model-health {
+  max-height: 130px;
+  overflow: auto;
+  font-size: 9px;
+}
+.model-health small {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 7px;
+}

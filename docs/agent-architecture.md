@@ -1,6 +1,18 @@
-# Local agent architecture
+# JARVIS agent architecture
 
-JARVIS now uses a bounded observe/plan/execute/verify/recover loop. Simple, unambiguous app or website requests retain a fast path. Contextual and multi-step requests use the local model with fresh screenshots, accessibility control IDs and recent observed actions. Specialized tool families load on demand to limit model context. A task has at most 24 steps and two recovery rounds; repeated identical actions are bounded. Malformed arguments return structured failures to the planner instead of raw validation errors in chat.
+JARVIS uses a bounded observe/plan/execute/verify/recover loop shared by voice and text. A structured semantic TaskProfile selects fast/general/deep/vision roles, research/computer control, temporal context and output requirements. Actual per-model capability proof and host privacy facts filter the candidates. Specialized tool families load on demand; deadlines, bounded steps/recovery, repeated-action prevention and cancellation apply across models. Malformed arguments return structured failures instead of raw errors in chat. Current research removes model-invented historical seasons; source dates still require scrutiny.
+
+## Hosted and local cooperation
+
+NVIDIA uses one encrypted credential, a pinned free development endpoint and a persistent local daily request ledger. Native tool messages, streamed call fragments and usage are normalized without exposing hidden reasoning. Proof expires after seven days; VERIFY FREE MODELS refreshes it. Rate-limit cooldowns, per-model circuit breakers, timeouts, cancellation and latency tracking control fallback. Kimi's observed vision can caption for Lightning's observed tools. Missing/invalid credentials or incompatible capabilities move to the next compatible free route, ultimately Ollama. FREE ONLY excludes paid providers/grounding. Separate cloud screen/files/clipboard/memory permissions apply to observations and retained history, including cached screen context.
+
+## Local specialists and real 3D
+
+Semantic memory/library search uses a provider-independent local embedding interface and SQLite vectors with model/content fingerprints, CPU Ollama all-minilm and keyword fallback. Local PyMuPDF extracts selected document text/tables in bounded pages; optional local NIM OCR/parser interfaces remain disabled without a compatible deployment. See [hardware evidence and actual capabilities](NVIDIA-3D.md).
+
+The Blender service serializes validated structured jobs in owned immutable revision directories. A trusted Python worker, launched with auto-execution disabled, performs bounded geometry/material/camera/light/render/export operations. CPU Cycles avoids taking the game's GPU. GLB assets have validated headers, internal resources and finite UUID-based IPC access; arbitrary renderer file access is unavailable. External destination writes/overwrites are host-confirmed. AI planning, real rendering, concise visual review and validated correction batches have iteration/size/deadline caps. Cancellation preserves the preceding revision. Unavailable review or nonmanifold geometry is reported, not treated as acceptance.
+
+Three.js is lazy loaded only for model cards, retains a static drawing buffer, repaints resize/reset events directly and releases geometry/materials/textures/render loops on disposal. Hidden/unfocused scenes pause; focused rendering slows under GPU/RAM/gaming load. OrbitControls supplies navigation. Runtime smoke checks inspect drawn mesh pixels, not merely canvas existence. Saved Library entries retain stable project/asset IDs independently of workspace card deletion.
 
 ## Screen context and Gaming Mode
 
@@ -28,6 +40,6 @@ Speech interrupts voice playback immediately. A new utterance does not silently 
 
 ## Local setup and manual check
 
-The existing Ollama Qwen3.5 9B chat/vision model, CUDA faster-whisper small.en and Kokoro British voice remain configured. Cheerio is the only added package, for readable web extraction. Windows accessibility, screenshot, input and audio dependencies remain local. Launch using `Launch-JARVIS.cmd`.
+The owner's NVIDIA routing, Ollama Qwen3.5 9B fallback, faster-whisper small.en and Kokoro bm_daniel British male voice are configured. Windows accessibility, screenshot, input and audio dependencies remain local. Added local dependencies are Blender, all-minilm and PyMuPDF; Three.js provides the in-app model viewer. Launch using `Launch-JARVIS.cmd`.
 
-Manually check microphone reconnection and barge-in first. Then check a simple website request, a multi-step browser request, an account/profile chooser in Steam, a visible-screen question, a public research question and Gaming Mode. Check that consequential actions require approval and that cancellation stops input. Try another monitor if you use one. Only lightweight static/build and isolated logic checks were performed; actual microphone and UI workflows require your manual testing.
+Windows exposes no recording endpoint, so connecting/enabling and selecting a microphone is the remaining physical conversation requirement. Real desktop, free hosted inference, visible-screen analysis, research retrieval and Blender creation/export were exercised; see [verification](VERIFICATION.md) for outcomes and limits. Protected controls, source availability, physical barge-in and manufacturing quality are not guaranteed by those checks.

@@ -10,6 +10,7 @@ export const categories = [
   'SAFETY',
   'SYSTEM',
   'APPEARANCE',
+  '3D',
 ] as const;
 export type Category = (typeof categories)[number];
 type Field = {
@@ -22,6 +23,13 @@ type Field = {
   step?: number;
 };
 const fields: Record<string, Field[]> = {
+  '3D': [
+    { key: 'blenderEnabled', label: 'Blender tools' },
+    { key: 'blenderPath', label: 'Blender executable (auto-detected)' },
+    { key: 'blenderIterations', label: 'Maximum design revisions', min: 1, max: 5 },
+    { key: 'blenderTimeout', label: 'Blender operation timeout / ms', min: 5000, max: 300000 },
+    { key: 'preview3dFps', label: '3D preview frame limit', min: 1, max: 60 },
+  ],
   VOICE: [
     { key: 'microphone', label: 'Microphone access' },
     { key: 'conversationMode', label: 'Hands-free conversation' },
@@ -72,6 +80,7 @@ const fields: Record<string, Field[]> = {
     { key: 'cloudScreen', label: 'Allow cloud screen images' },
     { key: 'cloudClipboard', label: 'Allow cloud clipboard' },
     { key: 'cloudFiles', label: 'Allow cloud file contents' },
+    { key: 'cloudMemory', label: 'Allow cloud access to retrieved memories' },
     {
       key: 'cloudVision',
       label: 'Cloud image policy',

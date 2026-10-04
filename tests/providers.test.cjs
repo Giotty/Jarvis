@@ -12,6 +12,7 @@ const config = () =>
   schema.parse({
     cloudEnabled: true,
     provider: 'openai',
+    freeOnly: false,
     openaiModel: 'custom-chat',
     anthropicModel: 'custom-claude',
     model: 'local-chat',

@@ -86,6 +86,8 @@ class AgentLoop {
     this.save();
     this.emit('state', 'THINKING');
     try {
+      this.taskProfile = await this.ai.beginTask?.(text, this.controller.signal, this.privateTask);
+      this.active.profile = this.taskProfile;
       await this.run();
     } catch (error) {
       if (!this.cancelled) {
@@ -127,6 +129,28 @@ class AgentLoop {
             (!this.backgroundOnly || this.backgroundTool(s.function.name)) &&
             (this.responseMode !== 'SIMPLE' || s.function.name !== 'present_briefing'),
         );
+      const initialScreenTask =
+        this.taskProfile?.vision &&
+        !this.taskProfile?.research &&
+        !this.active.steps.some(
+          (s) =>
+            ['analyze_screen', 'read_visible_text', 'list_ui_elements', 'capture_screen'].includes(
+              s.tool,
+            ) && s.result?.success,
+        );
+      if (initialScreenTask)
+        schema = schema.filter((s) =>
+          ['analyze_screen', 'list_ui_elements', 'get_foreground_window'].includes(s.function.name),
+        );
+      if (
+        this.taskProfile?.vision &&
+        !this.taskProfile?.research &&
+        !this.taskProfile?.pcControl &&
+        this.active.steps.some((s) => s.tool === 'analyze_screen' && s.result?.verified)
+      )
+        schema = [];
+      if (this.taskProfile?.research && !this.taskProfile?.pcControl && !this.taskProfile?.vision)
+        schema = schema.filter((s) => this.backgroundTool(s.function.name));
       const presentation = schema.find((s) => s.function.name === 'present_briefing');
       const modeTool = schema.find((s) => s.function.name === 'set_response_mode');
       const chooseMode = !this.responseMode && this.researchSources.size >= 2 && modeTool;
@@ -202,13 +226,16 @@ class AgentLoop {
             if (!this.cancelled) this.emit('reply-chunk', chunk);
           },
           {
-            manualVision: this.active.steps.some(
-              (s) => ['observe_screen', 'analyze_screen'].includes(s.tool) && s.result?.success,
-            ),
+            manualVision:
+              this.active.steps.some(
+                (s) => ['observe_screen', 'analyze_screen'].includes(s.tool) && s.result?.success,
+              ) || !!this.taskProfile?.vision,
             // Let the local model answer without tools when local preference is on.
             // Tool continuations then use the configured primary brain; no phrase classification.
             simple: this.active.steps.length === 0,
             localOnly: this.privateTask,
+            profile: this.taskProfile,
+            failures: unresolvedFailures,
             outputTokens: schema.some((s) => s.function.name === 'present_briefing') ? 2048 : 1024,
           },
         );
@@ -440,6 +467,23 @@ class AgentLoop {
         try {
           let args = call.function.arguments;
           if (typeof args === 'string') args = JSON.parse(args);
+          if (call.function.name === 'web_search' && this.taskProfile?.timeframe === 'current') {
+            const clean = (q) => {
+              if (typeof q !== 'string' || !q.trim()) return q;
+              let value = String(q)
+                .replace(/\b(?:19|20)\d{2}(?:\s*[-–/]\s*(?:\d{2}|(?:19|20)\d{2}))?\b/g, (year) =>
+                  this.request.includes(year) ? year : '',
+                )
+                .replace(/\s+/g, ' ')
+                .trim();
+              return value + ' ' + new Date().getFullYear();
+            };
+            args = {
+              ...args,
+              query: clean(args.query),
+              ...(args.queries ? { queries: args.queries.map(clean) } : {}),
+            };
+          }
           if (this.responseMode === 'SIMPLE' && call.function.name === 'present_briefing')
             throw Error('This request uses a concise answer without a new workspace.');
           if (presentNow && !autoImages && call.function.name !== 'present_briefing')
@@ -544,9 +588,13 @@ class AgentLoop {
           content: JSON.stringify(safe),
           _privacy: step.privacy,
         });
-        if (['files', 'clipboard', 'external'].includes(step.privacy)) this.sensitive = 'sensitive';
+        if (['files', 'clipboard', 'external', 'memory'].includes(step.privacy))
+          this.sensitive = 'sensitive';
+        if (step.privacy === 'screen' && !this.sensitive) this.sensitive = 'screen';
         if (
           (step.privacy === 'files' && !c.cloudFiles) ||
+          (step.privacy === 'memory' && !c.cloudMemory) ||
+          (step.privacy === 'screen' && (!c.cloudScreen || c.cloudVision === 'disabled')) ||
           (step.privacy === 'clipboard' && !c.cloudClipboard) ||
           (step.privacy === 'external' && (!c.cloudFiles || !c.cloudClipboard))
         )

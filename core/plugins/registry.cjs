@@ -10,6 +10,7 @@ const flags = {
   FILES_WRITE: 'filesystem',
   SYSTEM_CONTROL: 'powershell',
   PROCESS_CONTROL: 'browser',
+  BLENDER_CONTROL: 'blenderEnabled',
 };
 class PluginRegistry {
   constructor({
@@ -111,6 +112,15 @@ class PluginRegistry {
       tools: p.tools.map((t) => ({
         name: t.name,
         description: t.description,
+        provider: p.id,
+        availability: p.availability?.() || p.status,
+        timeout:
+          p.id === 'blender'
+            ? t.name === 'blender_design'
+              ? Math.min(300000, this.config().agentTaskTimeout || 180000)
+              : this.config().blenderTimeout || 90000
+            : this.config().toolTimeout || 30000,
+        readOnly: t.risk === 0,
         risk: t.risk,
         confirmation: t.risk >= 2,
         permissions: t.permissions,
@@ -171,7 +181,10 @@ class PluginRegistry {
       ...action,
       plugin: plugin.id,
       parallelSafe: tool.parallelSafe === true && action.risk === 0,
-      privacy: tool.privacy || (!plugin.builtin ? 'external' : undefined),
+      privacy:
+        plugin.builtin && Object.hasOwn(action, 'privacy')
+          ? action.privacy
+          : action.privacy || tool.privacy || (!plugin.builtin ? 'external' : undefined),
     };
   }
   async prepare(action, signal, goal) {
@@ -207,7 +220,16 @@ class PluginRegistry {
       !this.certifiedTargets.has(action.target)
     )
       throw Error('Confirmation required.');
-    const timeout = AbortSignal.timeout(this.config().toolTimeout || 30000);
+    const timeout = AbortSignal.timeout(
+      this.find(action.tool).plugin.id === 'blender'
+        ? Math.min(
+            300000,
+            action.tool === 'blender_design'
+              ? this.config().agentTaskTimeout || 180000
+              : this.config().blenderTimeout || 90000,
+          )
+        : this.config().toolTimeout || 30000,
+    );
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let abort;
     const interrupted = new Promise((_, reject) => {

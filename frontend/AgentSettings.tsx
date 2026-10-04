@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Config, Plugin, ProviderID, MCPServer, unwrap } from './types';
-const providers: ProviderID[] = ['ollama', 'openai', 'anthropic', 'gemini'];
+import { Config, Plugin, ProviderID, MCPServer, ProviderStatus, unwrap } from './types';
+const providers: ProviderID[] = ['nvidia', 'gemini', 'ollama', 'nim', 'openai', 'anthropic'];
 const capabilities = ['TEXT', 'TOOLS', 'VISION', 'STRUCTURED_OUTPUT', 'STREAMING', 'REASONING'];
 export function Pager({
   index,
@@ -92,6 +92,8 @@ export function ProviderSettings({
     [catalog, setCatalog] = useState<string[]>([]),
     [localCaps, setLocalCaps] = useState<string[]>([]),
     [status, setStatus] = useState('');
+  const [health, setHealth] = useState<ProviderStatus | null>(null),
+    [probing, setProbing] = useState(false);
   const select = (key: keyof Config, label: string, values: string[]) => (
     <label className="setting-row">
       <span>{label}</span>
@@ -125,25 +127,28 @@ export function ProviderSettings({
     </label>
   );
   const modelKey: keyof Config =
-    editing === 'ollama'
-      ? 'model'
-      : editing === 'openai'
-        ? 'openaiModel'
-        : editing === 'anthropic'
-          ? 'anthropicModel'
-          : 'geminiModel';
+    editing === 'nvidia'
+      ? 'nvidiaModel'
+      : editing === 'nim'
+        ? 'nimModel'
+        : editing === 'ollama'
+          ? 'model'
+          : editing === 'openai'
+            ? 'openaiModel'
+            : editing === 'anthropic'
+              ? 'anthropicModel'
+              : 'geminiModel';
   const model = String(draft[modelKey]),
     capKey = editing + ':' + model,
-    caps =
-      editing === 'ollama'
-        ? localCaps
-        : draft.providerCapabilities[capKey] ||
-          (editing === 'gemini' && ['gemini-2.5-flash', 'gemini-3.8-flash'].includes(model)
-            ? capabilities
-            : ['TEXT', 'STREAMING']);
+    caps = ['ollama', 'nvidia', 'nim'].includes(editing)
+      ? localCaps
+      : draft.providerCapabilities[capKey] ||
+        (editing === 'gemini' && ['gemini-2.5-flash', 'gemini-3.8-flash'].includes(model)
+          ? capabilities
+          : ['TEXT', 'STREAMING']);
   useEffect(() => {
     let active = true;
-    if (editing === 'ollama' && model && window.jarvis)
+    if (['ollama', 'nvidia', 'nim'].includes(editing) && model && window.jarvis)
       void unwrap(window.jarvis.providerCapabilities(editing, model))
         .then((c) => {
           if (active) setLocalCaps(c);
@@ -166,19 +171,42 @@ export function ProviderSettings({
             'AGENT BOUNDS',
             'INFERENCE OPTIONS',
             'NAME ALIASES',
+            'NVIDIA ROLES & HEALTH',
           ][page]
         }
       </h3>
       {page === 0 && (
         <>
           {select('provider', 'Primary brain', providers)}
+          {select('routerMode', 'Routing mode', [
+            'auto',
+            'force-model',
+            'prefer-speed',
+            'prefer-quality',
+            'local-only',
+            'free-cloud-local',
+            'privacy',
+          ])}
+          <label className="setting-row">
+            <span>Free fallback order</span>
+            <input
+              value={draft.providerPriority.join(', ')}
+              onChange={(e) => {
+                const ids = e.target.value
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter((s) => providers.includes(s as ProviderID));
+                update('providerPriority', ids.length ? ids : ['ollama']);
+              }}
+            />
+          </label>
           {select('fallbackProvider', 'Fallback brain', ['none', ...providers])}
           {select('visionProvider', 'Vision provider', ['auto', ...providers])}
           {toggle('cloudEnabled', 'Cloud inference')}
           {toggle('preferLocalSimple', 'Prefer local for initial inference')}
           <p className="help">
-            Cloud stays off until you enable it. Provider billing and quotas apply to your account.
-            API credentials are separate from configuration.
+            Free-only mode blocks paid providers. NVIDIA uses its fixed development endpoint and one
+            encrypted key for all roles. Local mode keeps requests on this PC.
           </p>
         </>
       )}
@@ -212,7 +240,14 @@ export function ProviderSettings({
           )}
           {editing === 'openai' && field('openaiVisionModel', 'Vision model')}
           {editing === 'gemini' && field('geminiVisionModel', 'Vision model')}
-          {editing !== 'ollama' && <Credentials name={editing} />}
+          {editing === 'nvidia' && field('nvidiaVisionModel', 'Requested vision model')}
+          {editing === 'nim' && (
+            <>
+              {field('nimUrl', 'Local NIM endpoint')}
+              {toggle('nimEnabled', 'Enable local NIM')}
+            </>
+          )}
+          {!['ollama', 'nim'].includes(editing) && <Credentials name={editing} />}
           <button
             disabled={!window.jarvis}
             onClick={async () => {
@@ -253,7 +288,7 @@ export function ProviderSettings({
               <label key={cap}>
                 <input
                   type="checkbox"
-                  disabled={!model || editing === 'ollama'}
+                  disabled={!model || ['ollama', 'nvidia', 'nim'].includes(editing)}
                   checked={caps.includes(cap)}
                   onChange={(e) =>
                     update('providerCapabilities', {
@@ -281,6 +316,7 @@ export function ProviderSettings({
               'agentTaskTimeout',
               'cloudRequestLimit',
               'geminiDailyCap',
+              'nvidiaDailyCap',
             ] as (keyof Config)[]
           ).map((key) => (
             <label className="setting-row" key={key}>
@@ -295,6 +331,7 @@ export function ProviderSettings({
                       agentTaskTimeout: 'Task timeout / ms',
                       cloudRequestLimit: 'Cloud session request limit (0 = off)',
                       geminiDailyCap: 'JARVIS Gemini requests / day',
+                      nvidiaDailyCap: 'JARVIS NVIDIA requests / day',
                     } as Record<string, string>
                   )[key]
                 }
@@ -310,9 +347,9 @@ export function ProviderSettings({
             </label>
           ))}
           <p className="help">
-            Gemini's daily cap is JARVIS's own safety budget, not Google's quota. Warning at 80%;
-            Ollama takes over at 100%. Resets at local midnight. Request attempts count, including
-            research and vision.
+            Daily caps are JARVIS safety budgets, not providers' actual quotas. Warning at 80%;
+            compatible free/local fallback at the cap. Reset at local midnight. Attempts count,
+            including research, vision and model checks.
           </p>
         </>
       )}
@@ -336,12 +373,71 @@ export function ProviderSettings({
         </>
       )}
       {page === 5 && <AliasSettings draft={draft} update={update} />}
+      {page === 6 && (
+        <>
+          {field('nvidiaFastModel', 'Fast / simple')}
+          {field('nvidiaModel', 'General / tools')}
+          {field('nvidiaDeepModel', 'Deep / escalation')}
+          {field('nvidiaVisionModel', 'Requested vision')}
+          <div className="inline-actions">
+            <button
+              disabled={probing || !window.jarvis}
+              onClick={async () => {
+                setProbing(true);
+                try {
+                  await save(draft);
+                  await unwrap(window.jarvis!.probeProvider('nvidia'));
+                  setHealth(await unwrap(window.jarvis!.providerStatus()));
+                  setStatus('Capability checks complete. Only observed features are enabled.');
+                } catch {
+                  setStatus(
+                    'Checks unavailable. Save one fresh NVIDIA key and enable cloud inference. Local fallback remains available.',
+                  );
+                } finally {
+                  setProbing(false);
+                }
+              }}
+            >
+              VERIFY FREE MODELS
+            </button>
+            <button disabled={!probing} onClick={() => void window.jarvis?.cancelProviderProbe()}>
+              CANCEL
+            </button>
+            <button
+              onClick={async () => {
+                if (window.jarvis) setHealth(await unwrap(window.jarvis.providerStatus()));
+              }}
+            >
+              STATUS
+            </button>
+          </div>
+          <p className="help">
+            Small synthetic probes count toward the daily safety budget. Unverified models cannot
+            control tools or inspect images. A free endpoint can still impose service limits.
+          </p>
+          <div className="model-health">
+            {health?.nvidia?.models.map((m) => (
+              <p key={m.id}>
+                {m.role.toUpperCase()} · {m.id}
+                <small>
+                  {m.status.toUpperCase()} · {m.caps.join(' / ') || 'UNVERIFIED'}
+                </small>
+              </p>
+            ))}
+          </div>
+          {health?.health.map((h) => (
+            <small key={h.model}>
+              {h.model} · {h.status.toUpperCase()} · {h.latency} ms · {h.failures} failures
+            </small>
+          ))}
+        </>
+      )}
       {status && (
         <p role="status" className="help">
           {status}
         </p>
       )}
-      <Pager index={page} count={6} onChange={setPage} />
+      <Pager index={page} count={7} onChange={setPage} />
     </div>
   );
 }

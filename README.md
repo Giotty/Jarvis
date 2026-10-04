@@ -1,10 +1,10 @@
 # JARVIS — MAATOUK INDUSTRIES
 
-**0.5.3** adds Gemini 3.8 Flash chat and requested vision, background web research, and a persistent configurable daily safety budget. At 80% it warns; at 100% it switches to Ollama. The counter resets at local midnight. HUD, presentation controls and the British male voice are retained.
+**0.6.0** adds free NVIDIA hosted routing with observed per-model capabilities, local semantic memory/document extraction, and real Blender creation, editing, exports and an interactive 3D workspace. The MAATOUK HUD, British male voice, local screen context, Gemini budget and host safety checks are retained.
 
 ## Launch
 
-Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.5.3.exe`.
+Double-click **Launch-JARVIS.cmd**. It starts installed Ollama and `release-final\win-unpacked\JARVIS.exe`. The installer is `release-final\JARVIS Setup 0.6.0.exe`.
 
 The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **Kokoro bm_daniel** British male speech. Piper/Windows voices remain supported. Windows currently exposes **no recording endpoint**: connect/enable a microphone and choose it in radial VOICE settings.
 
@@ -12,22 +12,28 @@ The existing profile retains **Ollama/qwen3.5:9b**, **Whisper small.en** and **K
 
 Original triangular SVG core, mechanical rings/ticks/scanners, actual telemetry left, AI/context/plugins right, compact command strip below. No top navigation or viewport scrolling. History/memory/tasks/process/logs use paged drawers. Unavailable sensors stay unavailable.
 
-Bottom-right settings retract the HUD and open **AI/VOICE/VISION/PLUGINS/PRIVACY/SAFETY/SYSTEM/APPEARANCE** around the core. Low/normal/high intensity, reduced/off motion and fullscreen are supported. **Escape exits fullscreen**. Layouts were checked at 1366×768, 1920×1080 and 2560×1440.
+Bottom-right settings retract the HUD and open **AI/VOICE/VISION/PLUGINS/PRIVACY/SAFETY/SYSTEM/APPEARANCE/3D** around the core. Low/normal/high intensity, reduced/off motion and fullscreen are supported. **Escape exits fullscreen**. Layouts were checked at 1366×768, 1920×1080 and 2560×1440.
 
 ## Providers
 
 Radial AI settings configure primary/fallback/dedicated-vision providers and model IDs.
 
-| Provider | Integration                                                                                                      | Verification                     |
-| -------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| OpenAI   | Responses: conversation, images, tools, streaming, JSON Schema, usage                                            | Mocks; no account inference      |
-| Claude   | Messages: conversation, images, tools, streaming, structured responses, usage                                    | Mocks; no account inference      |
-| Gemini   | Google v1beta: generation/streaming, functions, exact thought-signature replay, images, structured output, usage | Mocks; no account inference      |
-| Ollama   | Local text/streaming and model-supported tools/vision                                                            | Actual installed model and tasks |
+| Provider | Integration                                                                                                      | Verification                                            |
+| -------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| NVIDIA   | Free serverless OpenAI-compatible chat, native tool continuation, streaming, JSON and requested images           | Actual authenticated free requests; capability profiles |
+| NIM      | Optional loopback OpenAI-compatible endpoints; disabled until a compatible local deployment exists               | Interface tests; no local NIM installed                 |
+| OpenAI   | Responses: conversation, images, tools, streaming, JSON Schema, usage                                            | Mocks; no account inference                             |
+| Claude   | Messages: conversation, images, tools, streaming, structured responses, usage                                    | Mocks; no account inference                             |
+| Gemini   | Google v1beta: generation/streaming, functions, exact thought-signature replay, images, structured output, usage | Mocks; no account inference                             |
+| Ollama   | Local text/streaming and model-supported tools/vision                                                            | Actual installed model and tasks                        |
 
-Capabilities: TEXT/VISION/TOOLS/STRUCTURED_OUTPUT/STREAMING/REASONING. Ollama supplies local flags. Unknown cloud models start conservatively; set their profile from model documentation. A vision-only route can caption for the tool-capable primary. Fallback obeys cloud OFF, local-only tasks, sharing permissions and cancellation.
+Capabilities: TEXT/VISION/TOOLS/STRUCTURED_OUTPUT/STREAMING/REASONING. NVIDIA advanced flags require actual probes, not model-name guesses. AI settings expose VERIFY FREE MODELS, cancellation, observed latency, availability, rate limits and cached proof. A structured TaskProfile selects fast/general/deep/vision roles; failures escalate through compatible free models, then Gemini and Ollama. A vision-only route can caption for a tool-capable planner. Private mode and sharing restrictions override model preferences.
 
-For cloud use, configure a model, **SAVE KEY SECURELY**, enable cloud AI in PRIVACY and save. Keys/tokens use safeStorage/Windows DPAPI; IPC returns presence only. No account/key is supplied. Provider quotas/charges are not guaranteed free. The owner profile remains local/cloud OFF. If the installed default local Ollama server is stopped, JARVIS starts it automatically on a refused connection. The first request after model unloading still needs warmup.
+Enter one NVIDIA key in AI settings and **Encrypt & Save**. Keys/tokens use Electron safeStorage/Windows DPAPI; IPC returns presence only. No credential is included in the repository or installer. FREE ONLY pins NVIDIA's development endpoint, allows only the verified free catalog, and blocks paid OpenAI/Claude routes and paid Gemini grounding. Those adapters remain available for explicitly configured use outside free mode. Provider pricing/availability can change; free failure never enables billing.
+
+The configured owner uses NVIDIA AUTO routing with Ollama fallback. Gemini remains in the priority list but is skipped until a fresh secure Gemini key is saved; its older chat-exposed credential was removed under the compromised-key rule. Kimi handles general conversation and requested vision; Lightning handles fast actions and native tools; Ultra handles deep reasoning; Muse is a compatible tool fallback. DeepSeek did not produce a usable response in this account's checks; GLM is disabled because free access was not established. Exact observations and limitations: [NVIDIA and 3D](docs/NVIDIA-3D.md).
+
+NVIDIA and Gemini have independent configurable daily request budgets: defaults 100 each, 80% warning, cap fallback, local-midnight reset. These count JARVIS API attempts, including probes/classification/retries; they do not report Google's or NVIDIA's actual remaining quota. The owner's NVIDIA cap was set to 300 during setup/testing; Gemini remains 100. If local Ollama is stopped, JARVIS starts it on a refused connection. Local chat unloads after two idle minutes instead of retaining GPU memory for half an hour.
 
 ## Agent, plugins and safety
 
@@ -51,6 +57,14 @@ Screen OFF/MANUAL/WHILE AWAKE/CONTINUOUS modes retain adaptive capture, hashes/d
 
 Whisper handles complete utterances through the same agent. Hands-free interruption, CPU fallback and warm Kokoro/Piper workers remain. Partial transcripts never start speculative actions; audio stays in memory. Hardware, echo cancellation and model latency remain constraints.
 
+## Local memory, documents and 3D
+
+Local semantic retrieval uses SQLite vectors and Ollama `all-minilm:l6-v2` (384 dimensions, CPU), with keyword fallback and immediate invalidation on edits/deletion. Saved research content is indexed along with deliberate memory. PDF/XPS/EPUB text/tables use local PyMuPDF. OCR is on demand through optional local NIM or existing accessibility/vision fallbacks; no huge NIM containers were installed on this 8 GB RTX 4060.
+
+Official Blender 4.5.14 LTS is installed in `.tools/blender-4.5.14-windows-x64`; the owner profile already has its path. Validated operations build actual geometry/materials/lights/cameras, render through bounded CPU Cycles jobs and export BLEND/GLB/GLTF/OBJ/STL/FBX. No generated Python is executed. Projects have immutable revisions under `%APPDATA%\jarvis\3D`. Saving to the Library preserves 3D references; external exports and overwrites retain confirmation.
+
+Try “Create a simple futuristic hockey puck in 3D,” then “Make this 9.5 centimeters wide.” AI render review and correction have a configurable iteration cap. An unavailable visual review is reported honestly and the last real revision remains available. GLB cards support orbit/zoom/pan/reset/focus/save/reopen and render less under load or while hidden. STL export alone does not establish print readiness: inspect manifold warnings and geometry first. Portable Blender, Python dependencies and model weights are installed locally, not bundled in the small installer.
+
 ## Development/build
 
 Use Node.js 22+, pnpm and Python 3.11+:
@@ -72,4 +86,4 @@ Set absolute Python/model paths in settings. Existing installation scripts repro
 
 Architecture: frontend React/TypeScript/SVG; desktop sandboxed Electron/finite validated IPC; core/agent general loop; core/providers routing; core/plugins MCP/manifests; core/briefing.cjs scenes; core/research-agent.cjs public retrieval; voice workers; tests regression/mocks.
 
-See [floating research report](docs/MEMORY-WALL.md), [spatial research](docs/SPATIAL-RESEARCH.md), [rebuild report](docs/REBUILD_REPORT.md), [verification/limits](docs/VERIFICATION.md) and [safety](docs/SAFETY.md). UI checks do not guarantee fast inference. The workspace passed isolated interaction and packaged integration checks. Real local research selected FULL_WORKSPACE and retrieved images automatically, but source-preview fallbacks and incomplete analysis still occurred. Every model decision/website/app control cannot be guaranteed.
+See [NVIDIA/3D architecture and limits](docs/NVIDIA-3D.md), [verification](docs/VERIFICATION.md), [spatial research](docs/SPATIAL-RESEARCH.md) and [safety](docs/SAFETY.md). Real research creates sourced cards/images without browser navigation, but incomplete analysis and blocked/historical sources still occur. Current research has temporal safeguards; exact current team lines need dated reliable evidence. Every model decision, website or application control cannot be guaranteed.

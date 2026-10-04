@@ -399,6 +399,7 @@ test('a configured vision-only Gemini model captions before the tool-capable pri
       ...config(),
       cloudEnabled: true,
       provider: 'openai',
+      freeOnly: false,
       visionProvider: 'gemini',
       cloudScreen: true,
       cloudVision: 'when-needed',

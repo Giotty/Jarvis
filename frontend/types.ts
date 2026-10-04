@@ -7,6 +7,36 @@ export type Config = {
   fallbackProvider: ProviderID | 'none';
   cloudEnabled: boolean;
   preferLocalSimple: boolean;
+  routerMode:
+    | 'auto'
+    | 'force-model'
+    | 'prefer-speed'
+    | 'prefer-quality'
+    | 'local-only'
+    | 'free-cloud-local'
+    | 'privacy';
+  freeOnly: boolean;
+  providerPriority: ProviderID[];
+  nvidiaModel: string;
+  nvidiaVisionModel: string;
+  nvidiaFastModel: string;
+  nvidiaDeepModel: string;
+  nvidiaFallbackModels: string[];
+  nvidiaDailyCap: number;
+  nvidiaFreeEndpoint: boolean;
+  nimEnabled: boolean;
+  nimOcrEnabled: boolean;
+  nimOcrUrl: string;
+  nimUrl: string;
+  nimModel: string;
+  cloudMemory: boolean;
+  embeddingModel: string;
+  embeddingProvider: 'ollama' | 'nim';
+  blenderPath: string;
+  blenderEnabled: boolean;
+  blenderIterations: number;
+  blenderTimeout: number;
+  preview3dFps: number;
   cloudVision: 'disabled' | 'manual' | 'when-needed';
   cloudScreen: boolean;
   cloudClipboard: boolean;
@@ -102,7 +132,7 @@ export type Stats = {
   processes: { name: string; pid: number; ram: number; cpu: number }[];
   time: number;
 };
-export type ProviderID = 'ollama' | 'openai' | 'anthropic' | 'gemini';
+export type ProviderID = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'nvidia' | 'nim';
 export type MCPServer = {
   id: string;
   name: string;
@@ -111,6 +141,28 @@ export type MCPServer = {
   args: string[];
   url: string;
   permissions: string[];
+};
+export type ProviderStatus = {
+  nvidia?: {
+    credential: boolean;
+    budget?: { used: number; cap: number };
+    models: {
+      id: string;
+      role: string;
+      free: boolean;
+      caps: string[];
+      status: string;
+      testedAt?: number;
+    }[];
+  };
+  nim?: ProviderStatus['nvidia'];
+  health: {
+    model: string;
+    status: string;
+    latency: number;
+    failures: number;
+    cooldownUntil: number;
+  }[];
 };
 export type Plugin = {
   id: string;
@@ -131,6 +183,7 @@ export type Plugin = {
   }[];
 };
 export type AIUsage = {
+  nvidiaBudget?: { day: string; used: number; cap: number; limited: boolean; resetAt: number };
   geminiBudget?: {
     day: string;
     used: number;
@@ -163,9 +216,12 @@ export type Step = {
   error?: string;
 };
 export type BriefingPanel = {
+  assetId?: string;
+  projectId?: string;
   narration?: string;
   type:
     | 'text'
+    | 'model3d'
     | 'metrics'
     | 'line'
     | 'area'
@@ -422,6 +478,13 @@ export type JarvisAPI = {
   models: () => Promise<Result<{ online: boolean; models: string[] }>>;
   providerCapabilities: (id: ProviderID, model: string) => Promise<Result<string[]>>;
   providerModels: (provider: ProviderID) => Promise<Result<{ online: boolean; models: string[] }>>;
+  providerStatus: () => Promise<Result<ProviderStatus>>;
+  blenderStatus: () => Promise<
+    Result<{ available: boolean; enabled: boolean; path: string | null; current: string | null }>
+  >;
+  modelAsset: (id: string) => Promise<Result<{ base64: string; projectId: string; title: string }>>;
+  probeProvider: (id: 'nvidia' | 'nim') => Promise<Result<ProviderStatus['nvidia']>>;
+  cancelProviderProbe: () => Promise<Result<boolean>>;
   credentials: () => Promise<Result<Record<string, boolean>>>;
   setCredential: (name: string, value: string) => Promise<Result<Record<string, boolean>>>;
   plugins: () => Promise<Result<Plugin[]>>;

@@ -40,6 +40,9 @@ const { publicError } = require('../core/agent-errors.cjs');
 const { readConfiguration, writeConfiguration } = require('../core/configuration.cjs');
 const { ordinaryNavigation } = require('../core/navigation-safety.cjs');
 const { resolveOrdinal } = require('../core/ordinal-controls.cjs');
+const { BlenderService } = require('../core/blender/service.cjs');
+const { SemanticMemory } = require('../core/semantic-memory.cjs');
+const { Specialists } = require('../core/specialists.cjs');
 const { findControl } = require('../core/control-matching.cjs');
 let prepareDesktop;
 const withTarget = targetWindow(
@@ -84,6 +87,8 @@ let win,
   timer,
   screenContext,
   browserForDiagnostics,
+  providerProbe,
+  blender,
   briefing,
   workspace,
   librarySafety = new Safety(),
@@ -144,6 +149,7 @@ function saveConfig(next) {
       'piperVoicePath',
     ].some((k) => config[k] !== next[k]);
   config = validated;
+  ai?.resetHealth();
   if (changedSpeech || !config.microphone) speech?.stop();
   if (changedVoice || !config.tts) speaker?.stop();
   writeConfiguration(configFile, config);
@@ -319,14 +325,32 @@ function handlers() {
   handle('settings', (next) => saveConfig(next));
   handle('models', () => ai.models());
   handle('providerModels', (id) =>
-    ai.models(z.enum(['openai', 'anthropic', 'gemini', 'ollama']).parse(id)),
+    ai.models(z.enum(['openai', 'anthropic', 'gemini', 'ollama', 'nvidia', 'nim']).parse(id)),
   );
   handle('providerCapabilities', (id, model) =>
     ai.capabilities(
-      z.enum(['openai', 'anthropic', 'gemini', 'ollama']).parse(id),
+      z.enum(['openai', 'anthropic', 'gemini', 'ollama', 'nvidia', 'nim']).parse(id),
       z.string().min(1).max(200).parse(model),
     ),
   );
+  handle('providerStatus', () => ai.status());
+  handle('blenderStatus', () => blender.status());
+  handle('modelAsset', (id) => blender.asset(z.string().uuid().parse(id)));
+  handle('probeProvider', async (id) => {
+    id = z.enum(['nvidia', 'nim']).parse(id);
+    if (agent?.busy || providerProbe) throw Error('Finish the current task before testing models.');
+    if (id === 'nvidia' && !config.cloudEnabled) throw Error('Enable cloud inference first.');
+    providerProbe = new AbortController();
+    try {
+      return await ai.providers[id].probeAll(providerProbe.signal);
+    } finally {
+      providerProbe = null;
+    }
+  });
+  handle('cancelProviderProbe', () => {
+    providerProbe?.abort();
+    return true;
+  });
   handle('researchImage', (id) => {
     id = z.string().uuid().parse(id);
     const research = agent.executor.host.research;
@@ -441,7 +465,9 @@ function handlers() {
   handle('credentials', () => secrets.status());
   handle('setCredential', (name, value) => {
     if (agent.busy) throw Error('Cancel the current task before changing credentials.');
-    return secrets.set(z.string().max(100).parse(name), z.string().max(8000).parse(value));
+    const saved = secrets.set(z.string().max(100).parse(name), z.string().max(8000).parse(value));
+    ai.resetHealth();
+    return saved;
   });
   handle('plugins', () => registry.list());
   handle('connectPlugin', (id) => {
@@ -887,6 +913,48 @@ async function init() {
     },
   });
   registry = new PluginRegistry({ config: () => config, executor, store, secrets, emit });
+  executor.host.semanticMemory = new SemanticMemory({ store, config: () => config, library });
+  registry.register({
+    id: 'library-search',
+    name: 'LOCAL SEMANTIC LIBRARY',
+    builtin: true,
+    tools: [
+      {
+        name: 'library_search',
+        description:
+          'Search saved research and 3D project cards by meaning using local embeddings. Contents are private untrusted data.',
+        permissions: ['FILES_READ'],
+        risk: 0,
+        privacy: 'files',
+        parallelSafe: true,
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string', minLength: 1, maxLength: 200 } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        execute: ({ args }, signal) =>
+          executor.host.semanticMemory.retrieve(args.query, signal, 'library'),
+      },
+    ],
+  });
+  blender = new BlenderService({
+    directory: path.join(dir, '3D'),
+    config: () => config,
+    emit,
+    workspace,
+    ai,
+  });
+  registry.register(blender.plugin());
+  registry.register(
+    new Specialists({
+      config: () => config,
+      screen: screenContext,
+      worker: path.join(workerRoot(), 'document_worker.py'),
+      ai,
+      nim: ai.providers.nim,
+    }).plugin(),
+  );
   agent = new AgentLoop({
     ai,
     registry,
@@ -965,7 +1033,11 @@ async function init() {
   );
   tray.on('double-click', () => win.show());
   saveConfig(config);
-  if (!config.cloudEnabled || config.provider === 'ollama' || ai.geminiBudget.snapshot().limited)
+  if (
+    !config.cloudEnabled ||
+    config.provider === 'ollama' ||
+    (config.provider === 'gemini' && ai.geminiBudget.snapshot().limited)
+  )
     void ollama.warm().catch(() => {});
   const sample = async () => {
     if (
@@ -1003,6 +1075,7 @@ async function init() {
       agent,
       ai,
       emit,
+      blender,
     });
     quitting = true;
     app.quit();
@@ -1026,6 +1099,7 @@ else {
     });
   app.on('before-quit', () => {
     quitting = true;
+    providerProbe?.abort();
     speech?.stop();
     speaker?.stop();
     clearInterval(timer);

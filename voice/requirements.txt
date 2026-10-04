@@ -8,3 +8,4 @@ pillow>=12,<13
 kokoro-onnx>=0.6.1,<1
 uiautomation>=2.0,<3
 pycaw==20260927
+PyMuPDF==1.26.7

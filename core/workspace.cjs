@@ -814,7 +814,7 @@ const sourceSchema = z
       .max(4000)
       .refine((u) => {
         const p = new URL(u);
-        return ['http:', 'https:'].includes(p.protocol) && !p.username && !p.password;
+        return (['http:', 'https:'].includes(p.protocol) || p.protocol==='jarvis-artifact:' && id.safeParse(p.hostname).success && !p.pathname) && !p.username && !p.password;
       }),
     publishedAt: z.string().nullable().optional(),
     fetchedAt: z.number().finite().nullable().optional(),

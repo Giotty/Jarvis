@@ -174,7 +174,7 @@ class Ollama {
         messages,
         tools,
         stream: Boolean(onDelta),
-        keep_alive: '30m',
+        keep_alive: '2m',
         ...(options.schema ? { format: options.schema } : {}),
         ...(model.startsWith('qwen3') ? { think: options.reasoning === true } : {}),
         options: {
@@ -199,7 +199,7 @@ class Ollama {
         model: c.model,
         prompt: '',
         stream: false,
-        keep_alive: '30m',
+        keep_alive: '2m',
         options: { num_ctx: c.context },
       });
   }

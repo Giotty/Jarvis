@@ -119,6 +119,7 @@ export function App() {
     [hudHidden, setHudHidden] = useState(document.hidden),
     [outputLevel, setOutputLevel] = useState(0);
   const nextId = useRef(1),
+    showNextModel = useRef(false),
     partialReply = useRef<number | null>(null),
     commandBusy = useRef(false),
     configRef = useRef(config),
@@ -396,6 +397,7 @@ export function App() {
       }
       narrationDone.current = null;
       narrateThisTask.current = false;
+      showNextModel.current = true;
 
       player.current?.stop();
       speechSynthesis.cancel();
@@ -496,6 +498,22 @@ export function App() {
           break;
         case 'provider-fallback':
           report('The AI connection is unavailable. Trying the configured fallback.');
+          break;
+        case 'blender-progress': {
+          const p = e.data as { stage: string; revision?: number; iteration?: number };
+          report(
+            '3D · ' +
+              p.stage.replaceAll('-', ' ') +
+              (p.iteration ? ' ' + p.iteration : p.revision ? ' · revision ' + p.revision : ''),
+          );
+          break;
+        }
+        case 'blender-model-presented':
+          if (showNextModel.current) {
+            dismissedWorkspace.current = null;
+            setBriefingVisible(true);
+            showNextModel.current = false;
+          }
           break;
         case 'telemetry': {
           const s = e.data as Stats;
@@ -706,13 +724,17 @@ export function App() {
       : 'ollama';
   const selectedModel = aiUsage?.requests
     ? aiUsage.model
-    : selectedProvider === 'gemini'
-      ? config?.geminiModel
-      : selectedProvider === 'openai'
-        ? config?.openaiModel
-        : selectedProvider === 'anthropic'
-          ? config?.anthropicModel
-          : config?.model;
+    : selectedProvider === 'nvidia'
+      ? config?.nvidiaModel
+      : selectedProvider === 'nim'
+        ? config?.nimModel
+        : selectedProvider === 'gemini'
+          ? config?.geminiModel
+          : selectedProvider === 'openai'
+            ? config?.openaiModel
+            : selectedProvider === 'anthropic'
+              ? config?.anthropicModel
+              : config?.model;
   const budget = aiUsage?.geminiBudget;
   const currentStep = active?.steps.at(-1);
   const displayMessage = messages.filter((m) => m.role === 'USER' || m.role === 'JARVIS').slice(-2);
@@ -733,6 +755,8 @@ export function App() {
         (briefingVisible && workspace && !settingsOpen ? ' briefing-open' : '') +
         (hudHidden ? ' hud-hidden' : '') +
         ((stats?.gpu || 0) > 80 ? ' gpu-loaded' : '') +
+        ((stats?.ram || 0) > 90 ? ' ram-loaded' : '') +
+        (screenContext?.gaming ? ' gaming-active' : '') +
         (confirmation ? ' confirmation-active' : '')
       }
     >
@@ -903,6 +927,35 @@ export function App() {
                 </b>
               </span>
             </div>
+            {aiUsage?.nvidiaBudget && config?.provider === 'nvidia' && (
+              <div
+                className={
+                  'gemini-budget' +
+                  (aiUsage.nvidiaBudget.used >= aiUsage.nvidiaBudget.cap * 0.8
+                    ? ' budget-warning'
+                    : '')
+                }
+              >
+                <b>
+                  NVIDIA · {aiUsage.nvidiaBudget.used} / {aiUsage.nvidiaBudget.cap} today
+                </b>
+                <progress max={aiUsage.nvidiaBudget.cap} value={aiUsage.nvidiaBudget.used} />
+                <small>
+                  {aiUsage.nvidiaBudget.limited
+                    ? 'LOCAL / FREE PROVIDER FALLBACK'
+                    : aiUsage.nvidiaBudget.used >= aiUsage.nvidiaBudget.cap * 0.8
+                      ? '80% SAFETY BUDGET WARNING'
+                      : 'JARVIS safety budget · service limits may differ'}
+                </small>
+              </div>
+            )}
+            <small className="processing-state">
+              {['nvidia', 'gemini'].includes(selectedProvider)
+                ? 'FREE HOSTED'
+                : selectedProvider === 'ollama' && config?.cloudEnabled
+                  ? 'OFFLINE FALLBACK'
+                  : 'LOCAL'}
+            </small>
             <p className="link-state">
               {config?.cloudEnabled
                 ? 'CLOUD ROUTING AVAILABLE'
@@ -986,7 +1039,7 @@ export function App() {
           <div className="settings-orbit" role="dialog" aria-label="Radial settings">
             <div className="orbit-guide" />
             {categories.map((c, i) => {
-              const angle = ((i * 45 - 90) * Math.PI) / 180;
+              const angle = ((i * (360 / categories.length) - 90) * Math.PI) / 180;
               return (
                 <button
                   key={c}

@@ -13,6 +13,8 @@ const secrets = { get: () => 'synthetic-test-key' };
 const config = (extra) =>
   schema.parse({
     provider: 'gemini',
+    freeOnly: false,
+    geminiGrounding: true,
     cloudEnabled: true,
     geminiModel: 'gemini-2.5-flash',
     geminiVisionModel: 'gemini-2.5-flash',

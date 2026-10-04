@@ -18,8 +18,11 @@ const panel = z
       'sources',
       'video',
       'map',
+      'model3d',
     ]),
     title: z.string().min(1).max(90),
+    assetId: z.string().uuid().optional(),
+    projectId: z.string().uuid().optional(),
     body: z.string().max(650).default(''),
     narration: z.string().max(400).default(''),
     sourceIds: z.array(sourceId).min(1).max(4),
@@ -256,7 +259,10 @@ class BriefingEngine {
     });
   }
   present(input) {
-    return this.publish(briefingSchema.parse(input), true);
+    const parsed = briefingSchema.parse(input);
+    if (parsed.scenes.some((s) => s.panels.some((p) => p.type === 'model3d')))
+      throw Error('Use the Blender plugin to present registered real 3D assets.');
+    return this.publish(parsed, true);
   }
   publish(input, checked) {
     if (!this.sources.size) throw Error('Fetch research sources before presenting a briefing.');
