@@ -420,9 +420,7 @@ class ProviderRouter {
             ...(adaptive
               ? [
                   c.nvidiaModel,
-                  ...(['complex', 'very_complex'].includes(profile.complexity)
-                    ? [c.nvidiaDeepModel]
-                    : []),
+                  c.nvidiaDeepModel,
                   c.nvidiaFastModel,
                   ...(c.nvidiaFallbackModels || []),
                 ]
@@ -443,6 +441,43 @@ class ProviderRouter {
       )
         continue;
       if (['nvidia', 'nim'].includes(id) && !this.providers[id]?.available(chosenModel)) continue;
+      // Capability selection is a router decision, not a failed connection.
+      // Keep an auditable rejection without making a knowingly invalid request.
+      const candidateCaps = await this.capabilities(id, chosenModel, signal);
+      const canCaption = hasScreen && candidateCaps.includes('VISION');
+      const mismatch =
+        tools?.length && !candidateCaps.includes('TOOLS') && !canCaption
+          ? 'tools_unsupported'
+          : options.schema &&
+              !candidateCaps.includes('STRUCTURED_OUTPUT') &&
+              !candidateCaps.includes('VISION')
+            ? 'structured_output_unsupported'
+            : hasScreen && ['nvidia', 'nim'].includes(id) && !candidateCaps.includes('VISION')
+              ? 'vision_unsupported'
+              : options.reasoning && !candidateCaps.includes('REASONING')
+                ? 'reasoning_unsupported'
+                : null;
+      if (mismatch) {
+        this.emit('provider-diagnostic', {
+          event: 'router-capability-rejection',
+          provider: id,
+          model: chosenModel,
+          code: mismatch,
+          category: 'ROUTER_CAPABILITY_MISMATCH',
+          httpAttempted: false,
+        });
+        continue;
+      }
+      if (!['ollama', 'nim'].includes(id) && this.secrets?.status && !this.secrets.status()[id]) {
+        this.emit('provider-diagnostic', {
+          event: 'router-credential-missing',
+          provider: id,
+          model: chosenModel,
+          category: 'AUTH_ERROR',
+          httpAttempted: false,
+        });
+        continue;
+      }
       const healthKey = id + ':' + chosenModel,
         health = this.health.get(healthKey) || {
           failures: 0,
@@ -591,9 +626,39 @@ class ProviderRouter {
         this.usage.outputTokens += reply.usage?.output || 0;
         this.emit('ai-usage', { ...this.usage });
         return { ...reply, provider: id, model: this.usage.model };
-      } catch (error) {
+      } catch (caught) {
         signal?.throwIfAborted();
+        // DOMException.code is read-only. Normalize a wrapper rather than
+        // mutating the transport error and breaking the fallback itself.
+        let error = caught;
+        if (!error.category) {
+          const localStatus = error.message?.match(/Ollama returned (\d{3})/i)?.[1];
+          const code = localStatus
+            ? 'http_' + localStatus
+            : error.name === 'TimeoutError'
+              ? 'timeout'
+              : typeof error.code === 'string'
+                ? error.code
+                : error.name === 'SyntaxError'
+                  ? 'malformed_response'
+                  : error.name === 'TypeError'
+                    ? 'network'
+                    : 'provider_error';
+          error = Object.assign(new Error(caught.message, { cause: caught }), {
+            name: caught.name,
+            code,
+            category: require('./diagnostics.cjs').category(code),
+          });
+        }
         last = error;
+        this.emit('provider-diagnostic', {
+          event: 'router-provider-failure',
+          provider: id,
+          model: chosenModel,
+          code: error.code,
+          category: error.category,
+          error: require('./diagnostics.cjs').safeError(error.message),
+        });
         const failures = health.failures + 1;
         if (['http_401', 'http_403', 'http_402'].includes(error.code))
           this.health.set('provider:' + id, {
@@ -617,7 +682,13 @@ class ProviderRouter {
         });
         // Never concatenate a fallback answer onto already spoken partial text.
         if (emitted) throw error;
-        this.emit('provider-fallback', { from: id, reason: error.code || 'unavailable' });
+        this.emit('provider-fallback', {
+          from: id,
+          model: chosenModel,
+          reason: error.code || 'unavailable',
+          category: error.category,
+          diagnostic: error.diagnostic,
+        });
       }
     }
     throw last || new ProviderError('no_provider');

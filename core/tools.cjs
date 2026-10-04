@@ -594,6 +594,14 @@ const definitions = {
     schema: z.object({}).strict(),
     description: 'Read current system telemetry',
   },
+  inspect_hardware: {
+    risk: 0,
+    schema: z
+      .object({ component: z.enum(['gpu', 'cpu', 'memory', 'all']).default('gpu') })
+      .strict(),
+    description:
+      'Inspect actual local hardware. GPU identity is independently checked with Windows CIM and NVIDIA tools. Returns public hardware model/specifications without process, serial, file or account information.',
+  },
   list_running_apps: {
     risk: 0,
     schema: z.object({}).strict(),
@@ -1154,6 +1162,8 @@ class Executor {
         return { success: true };
       case 'get_system_stats':
         return this.host.stats();
+      case 'inspect_hardware':
+        return require('./hardware.cjs').inspectHardware(p.component, signal);
       case 'list_running_apps':
         return { processes: (await this.host.stats()).processes };
       case 'open_url':

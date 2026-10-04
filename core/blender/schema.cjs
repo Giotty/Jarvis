@@ -87,6 +87,7 @@ const operations = {
     target: vector.default([0, 0, 0]),
     lens: z.number().min(10).max(200).default(50),
     orthographic: z.boolean().default(false),
+    fit: z.boolean().default(false),
     orthoScale: z.number().positive().max(1000).default(5),
   }),
   set_light: z.object({

@@ -137,10 +137,12 @@ export function ModelPreview({ assetId }: { assetId: string }) {
           dirty = true;
         });
         setReady(true);
+        void window.jarvis?.modelPreviewStatus({ assetId, loaded: true }).catch(() => {});
         setStatus('DRAG TO ORBIT · SCROLL TO ZOOM');
         frame = requestAnimationFrame(tick);
       })
       .catch(() => {
+        void window.jarvis?.modelPreviewStatus({ assetId, loaded: false }).catch(() => {});
         if (alive) setStatus('MODEL PREVIEW UNAVAILABLE');
       });
     return () => {

@@ -38,7 +38,10 @@ class ContextManager {
   }
   begin(request, config, plugins, screen) {
     const scope = {
-      fileRoot: config.fileRoot,
+      fileRoot:
+        !config.cloudEnabled || config.provider === 'ollama' || config.cloudFiles
+          ? config.fileRoot
+          : undefined,
       fileAccess: config.fileAccess,
       weatherLocation:
         config.weatherLocation || 'Not configured; ask for a city when none was specified.',

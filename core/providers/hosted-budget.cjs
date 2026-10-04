@@ -75,11 +75,24 @@ class HostedBudget {
       this.emit('provider-budget', { provider: 'nvidia', ...this.snapshot() });
     } catch (e) {
       if (e instanceof ProviderError) throw e;
+      if (e.code === 'EEXIST') throw new ProviderError('budget_busy');
       throw new ProviderError('budget_storage', false);
     } finally {
       if (lock !== undefined) {
         fs.closeSync(lock);
         fs.unlinkSync(this.file + '.lock');
+      }
+    }
+  }
+  async reserve(signal) {
+    const deadline = Date.now() + 2000;
+    for (;;) {
+      try {
+        return this.take(signal);
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (error.code !== 'budget_busy' || Date.now() >= deadline) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
   }

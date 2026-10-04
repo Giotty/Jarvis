@@ -6,6 +6,8 @@ const {
   diverse,
   terms,
   coveringLinks,
+  authority,
+  productIdentifiers,
 } = require('./research-search.cjs');
 const dns = require('node:dns/promises');
 const http = require('node:http');
@@ -77,7 +79,10 @@ async function webGet(
       response.body.destroy();
       continue;
     }
-    if (!response.ok) throw Error(`Research page returned HTTP ${response.status}.`);
+    if (!response.ok) {
+      response.body.destroy();
+      throw Error(`Research page returned HTTP ${response.status}.`);
+    }
     const contentType = response.headers.get('content-type') || '';
     if (
       binary
@@ -166,6 +171,24 @@ function excerpt(text, query, limit = 12000) {
 function extract(html, url, query = '') {
   const $ = cheerio.load(html);
   const title = $('title').first().text().trim();
+  const tables = [];
+  $('table')
+    .slice(0, 8)
+    .each((_, table) => {
+      const rows = $(table)
+        .find('tr')
+        .toArray()
+        .slice(0, 60)
+        .map((row) =>
+          $(row)
+            .find('th,td')
+            .toArray()
+            .slice(0, 16)
+            .map((cell) => $(cell).text().replace(/\s+/g, ' ').trim().slice(0, 250)),
+        )
+        .filter((row) => row.length >= 2);
+      if (rows.length >= 3) tables.push({ rows });
+    });
   const images = [];
   $('meta[property="og:image"],meta[name="twitter:image"]').each((_, node) => {
     try {
@@ -174,6 +197,23 @@ function extract(html, url, query = '') {
         images.push({ url: target.href, title, sourceUrl: url });
     } catch {}
   });
+  // Product pages often use a generic social image. Include actual product
+  // photographs whose identifiers match the queried subject or page path.
+  const imageIdentifiers = (query + ' ' + new URL(url).pathname).match(/\d{3,5}/g) || [];
+  if (imageIdentifiers.length)
+    $('img').each((_, node) => {
+      const raw = $(node).attr('src') || $(node).attr('data-src');
+      if (
+        !raw ||
+        !imageIdentifiers.some((id) => (raw + ' ' + ($(node).attr('alt') || '')).includes(id))
+      )
+        return;
+      try {
+        const target = new URL(raw, url);
+        if (target.protocol === 'https:' && !images.some((i) => i.url === target.href))
+          images.unshift({ url: target.href, title: $(node).attr('alt') || title, sourceUrl: url });
+      } catch {}
+    });
   const publishedAt =
     $('meta[property="article:published_time"],meta[name="date"],meta[itemprop="datePublished"]')
       .first()
@@ -181,10 +221,34 @@ function extract(html, url, query = '') {
     $('time[datetime]').first().attr('datetime') ||
     null;
   const structured = structuredText($);
-  $('script,style,noscript,iframe,form,nav,footer,header,aside,svg,[hidden]').remove();
-  const main = $('article,main,[role=main]').first();
+  const pagination = [];
+  if (query)
+    $('select option[value]').each((_, node) => {
+      const raw = $(node).attr('value'),
+        label = $(node).text().trim();
+      if (!/^(?:https?:|\/|\.\/)/.test(raw || '')) return;
+      const target = cleanUrl(raw, url);
+      if (!target || new URL(target).origin !== new URL(url).origin || target === url || !label)
+        return;
+      pagination.push({
+        id: require('node:crypto').randomUUID(),
+        title: label,
+        url: target,
+        relevance:
+          relevance({ title: label, url: target }, query) +
+          (/conclusion|verdict|summary|pros|cons/i.test(label) ? 5 : 0),
+        source: new URL(target).hostname,
+        fetchedAt: Date.now(),
+      });
+    });
+  $(
+    'script,style,noscript,iframe,form,nav,footer,header,aside,svg,[hidden],[class*=sidebar],[id*=sidebar],[class*=related-],[class*=popular-]',
+  ).remove();
+  const main = $(
+    'article,main,[role=main],[itemprop=articleBody],.article-body,.article-content,.review-text',
+  ).first();
   const content = main.length && main.text().trim().length >= 100 ? main : $('body');
-  const links = [];
+  const links = pagination;
   if (query)
     content.find('a[href]').each((_, node) => {
       const target = cleanUrl($(node).attr('href'), url),
@@ -197,7 +261,12 @@ function extract(html, url, query = '') {
         /\/wiki\/(?:Talk|Template_talk|File|Special|Help):/.test(target)
       )
         return;
-      const score = relevance({ title: label, url: target }, query);
+      const score =
+        relevance({ title: label, url: target }, query) +
+        (productIdentifiers(query).length &&
+        /\b(?:conclusion|verdict|summary|pros|cons)\b/i.test(label)
+          ? 1
+          : 0);
       if (score > 0)
         links.push({
           id: require('node:crypto').randomUUID(),
@@ -221,12 +290,13 @@ function extract(html, url, query = '') {
   const text = excerpt(
     body + (structured ? '\nPublic structured page data:\n' + structured : ''),
     query,
-    query ? 4500 : 12000,
+    query ? (productIdentifiers(query).length ? 9000 : 4500) : 12000,
   );
   return {
     url,
     title,
     text,
+    tables,
     publishedAt,
     images: images.slice(0, 3),
     links: diverse(
@@ -325,7 +395,7 @@ class ResearchAgent {
               ...page,
               text: page.videos?.length
                 ? 'Public channel uploads, publication dates and available view counts are listed in videos below. Shorts are identified separately. Counts are snapshots, not guaranteed live.'
-                : page.text.slice(0, 4500),
+                : page.text.slice(0, productIdentifiers(query).length ? 9000 : 4500),
               ...(page.videos ? { videos: page.videos.slice(0, 8) } : {}),
               readable: Boolean(
                 page.text && (page.text.length >= 200 || page.video || page.videos?.length),
@@ -348,7 +418,7 @@ class ResearchAgent {
     const links = coveringLinks(
       fetched
         .flatMap((s) => s.links || [])
-        .filter((l) => !seen.has(l.url))
+        .filter((l) => !seen.has(l.url) && (!productIdentifiers(query).length || authority(l) > 0))
         .sort((a, b) => b.relevance - a.relevance),
       query,
       4,
@@ -356,8 +426,10 @@ class ResearchAgent {
     const deeper = deadline.aborted ? [] : await read(links);
     const sources = diverse(
       [
-        ...[...deeper, ...fetched].filter((s) => s.readable),
-        ...[...fetched, ...deeper].filter((s) => !s.readable),
+        ...[...deeper, ...fetched]
+          .filter((s) => s.readable)
+          .sort((a, b) => authority(b) - authority(a)),
+        ...[...deeper, ...fetched].filter((s) => !s.readable),
       ],
       6,
     );
@@ -435,6 +507,16 @@ class ResearchAgent {
     }
     const page = await this.get(url, signal);
     const output = { success: true, verified: true, ...extract(page.html, page.url, query) };
+    output.readable = output.text.length >= 200;
+    if (
+      /^(?:checking your browser|just a moment|access denied|attention required|verify you are human)/i.test(
+        output.title,
+      ) ||
+      /\/\.stile\/challenge(?:\?|\/)|\/cdn-cgi\/challenge/i.test(page.url)
+    )
+      throw Error(
+        'The public source returned a browser verification page instead of its content. Try another source.',
+      );
     if (
       ['www.youtube.com', 'youtube.com'].includes(parsed.hostname) &&
       /^(?:\/@|\/channel\/)/.test(parsed.pathname)
@@ -484,7 +566,7 @@ class ResearchAgent {
         if (
           !item.url ||
           seen.has(item.url) ||
-          /watermark|\/favicon|\/sprite|\/pixel\b/i.test(item.url) ||
+          /watermark|\/favicon|\/sprite|\/pixel\b|\blogo\b/i.test(item.url + ' ' + item.title) ||
           (item.width && item.width < 200) ||
           (item.height && item.height < 150)
         )

@@ -96,10 +96,11 @@ test('NVIDIA strips reasoning split over stream chunks and rejects incomplete st
   );
   const filter = new ReasoningFilter();
   assert.equal(filter.push('<think>private', true), '');
-  assert.throws(
-    () => normalize({ choices: [{ finish_reason: 'length', message: { content: 'partial' } }] }),
-    { code: 'incomplete_response' },
-  );
+  const truncated = normalize({
+    choices: [{ finish_reason: 'length', message: { content: 'partial' } }],
+  });
+  assert.equal(truncated.truncated, true);
+  assert.equal(truncated.content, 'partial');
 });
 test('Missing credentials and unverified free models never spend the local request budget', async () => {
   let requests = 0;
@@ -115,7 +116,7 @@ test('Missing credentials and unverified free models never spend the local reque
   assert.equal(requests, 0);
   assert.equal(p.budget.snapshot().used, 0);
   await assert.rejects(
-    () => p.chat([], undefined, false, undefined, undefined, { model: 'z-ai/glm-5.3-flash' }),
+    () => p.chat([], undefined, false, undefined, undefined, { model: 'unlisted/paid-model' }),
     { code: 'free_endpoint_unverified' },
   );
 });

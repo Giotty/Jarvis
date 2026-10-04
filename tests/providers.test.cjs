@@ -247,6 +247,24 @@ function routerProviders() {
     calls,
   };
 }
+test('read-only DOMException timeout codes preserve classification and local fallback', async () => {
+  const { providers, calls } = routerProviders();
+  const events = [];
+  providers.openai.chat = async () => {
+    throw new DOMException('Transport timed out', 'TimeoutError');
+  };
+  const router = new ProviderRouter({
+    config,
+    providers,
+    emit: (type, data) => events.push({ type, data }),
+  });
+  const reply = await router.chat(messages);
+  assert.equal(reply.provider, 'ollama');
+  assert.equal(calls[0].id, 'ollama');
+  const fallback = events.find((e) => e.type === 'provider-fallback').data;
+  assert.equal(fallback.reason, 'timeout');
+  assert.equal(fallback.category, 'TIMEOUT');
+});
 test('rate limits and missing cloud credentials fall back to local; explicit cancellation never falls back', async () => {
   const { providers, calls } = routerProviders();
   providers.openai.chat = async () => {

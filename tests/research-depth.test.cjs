@@ -147,6 +147,16 @@ test('public structured records and table rows survive extraction; scripts never
   assert.doesNotMatch(page.text, /throw new Error/);
   assert.equal(page.untrusted, true);
 });
+test('Public review page navigation discovers conclusion URLs without submitting forms', () => {
+  const page = extract(
+    '<title>Processor A review</title><form><select><option value="/reviews/processor-a/conclusion.html">Conclusion</option><option value="javascript:bad">Ignore</option></select></form><article><p>Processor A review discusses a compact and efficient product with detailed measurements.</p><a href="/reviews/processor-a/architecture.html">Architecture</a></article>',
+    'https://example.org/reviews/processor-a/',
+    'Processor A review',
+  );
+  assert.equal(page.links[0].url, 'https://example.org/reviews/processor-a/conclusion.html');
+  assert.ok(page.links.every((l) => l.url.startsWith('https://example.org/')));
+  assert.doesNotMatch(page.text, /Ignore|Conclusion/);
+});
 
 test('relevant sections past the old truncation limit remain readable with their heading context', () => {
   const long =

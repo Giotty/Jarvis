@@ -1,3 +1,4 @@
+require('../core/log-pipe.cjs').protectLogPipes();
 const {
   app,
   BrowserWindow,
@@ -51,6 +52,7 @@ const withTarget = targetWindow(
   () => prepareDesktop?.(),
 );
 const inFlight = new Set();
+const modelPreviews = new Map();
 function track(operation) {
   const pending = operation();
   inFlight.add(pending);
@@ -336,6 +338,16 @@ function handlers() {
   handle('providerStatus', () => ai.status());
   handle('blenderStatus', () => blender.status());
   handle('modelAsset', (id) => blender.asset(z.string().uuid().parse(id)));
+  handle('modelPreviewStatus', (input) => {
+    const report = z
+      .object({ assetId: z.string().uuid(), loaded: z.boolean() })
+      .strict()
+      .parse(input);
+    blender.asset(report.assetId);
+    modelPreviews.set(report.assetId, { ...report, time: Date.now() });
+    emit('model-preview', report);
+    return true;
+  });
   handle('probeProvider', async (id) => {
     id = z.enum(['nvidia', 'nim']).parse(id);
     if (agent?.busy || providerProbe) throw Error('Finish the current task before testing models.');
@@ -801,6 +813,7 @@ async function init() {
       browser,
       research,
       workspace,
+      modelPreviewStatus: (id) => modelPreviews.get(id),
       verifyApplication,
       screenState: () => screenContext.snapshot(),
       visibleWindows: async () => (await nativeCall('list_windows')).windows,

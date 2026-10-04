@@ -1,4 +1,10 @@
-# NVIDIA routing, local specialists and Blender — 0.6.0
+# NVIDIA routing, local specialists and Blender
+
+## October 4 update — 0.6.1
+
+The current small direct probes, adapter fixes and exact acceptance evidence are in [Verification](VERIFICATION.md#october-4--acceptance-repair-061). Lightning, Ultra and Muse succeeded with text/streaming/tools/JSON; Lightning/Ultra also passed reasoning. Kimi succeeded with text and actual structured render vision, but has intermittent empty/timeout responses and no demonstrated native tool success. DeepSeek and GLM were listed/authenticated but their actual inference probes timed out. GLM was now tested on NVIDIA's free trial route; the older free-access uncertainty below is historical. No paid routes were used. Capability profiles record observed modes rather than assuming every listed model supports every operation.
+
+The generic task graph verifies real hardware, sources/images, chart cells, saved Library items, Blender exports and a renderer GLB-loaded acknowledgment. Failed independent research does not block illustrative 3D creation. Full contracts are still validated in the host after compact NVIDIA grammar recovery. Old 0.6.0 results below are retained as historical evidence.
 
 ## Observed hosted capabilities
 

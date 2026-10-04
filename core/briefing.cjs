@@ -137,7 +137,10 @@ class BriefingEngine {
         else continue;
       }
       const id = existing?.id || observation.id || crypto.randomUUID();
-      const source = { ...observation, id, title: observation.title || observation.url };
+      const source =
+        existing?.readable === true && observation.readable === false
+          ? { ...existing, latestAttemptFailed: true, latestAttemptAt: observation.fetchedAt }
+          : { ...observation, id, title: observation.title || observation.url };
       try {
         const url = new URL(source.url);
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
@@ -289,6 +292,7 @@ class BriefingEngine {
               forecast: s.forecast,
               video: s.video,
               videos: s.videos,
+              tables: s.tables,
             })),
           );
           if (p.data.some((d) => !observed.has(d.value)))

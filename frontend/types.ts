@@ -483,6 +483,7 @@ export type JarvisAPI = {
     Result<{ available: boolean; enabled: boolean; path: string | null; current: string | null }>
   >;
   modelAsset: (id: string) => Promise<Result<{ base64: string; projectId: string; title: string }>>;
+  modelPreviewStatus: (report: { assetId: string; loaded: boolean }) => Promise<Result<boolean>>;
   probeProvider: (id: 'nvidia' | 'nim') => Promise<Result<ProviderStatus['nvidia']>>;
   cancelProviderProbe: () => Promise<Result<boolean>>;
   credentials: () => Promise<Result<Record<string, boolean>>>;

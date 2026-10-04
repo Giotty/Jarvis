@@ -18,6 +18,7 @@ const base = [
   'list_directory',
   'extract_page_text',
   'get_system_stats',
+  'inspect_hardware',
   'get_audio_state',
   'set_volume',
   'media',

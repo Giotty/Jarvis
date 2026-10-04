@@ -25,10 +25,30 @@ function relevance(item, query) {
   const wanted = terms(query),
     text = new Set(terms(`${item.title} ${item.snippet || ''} ${item.url}`));
   if (!wanted.length) return 1;
+  // Preserve precise product identifiers: a shared vendor/tier name cannot
+  // substitute a different CPU, GPU, monitor or software release number.
+  const identifiers = productIdentifiers(query);
+  if (identifiers.some((t) => !text.has(t))) return 0;
   const matched = wanted.filter((t) => text.has(t)).length;
   // A city-only hit must not satisfy a multiword team/person/product query.
   if (wanted.length >= 2 && matched < 2) return 0;
   return matched / wanted.length;
+}
+function productIdentifiers(query) {
+  return [
+    ...String(query).matchAll(/\b(?:rtx|gtx|rx|ryzen|core\s+i[3579]|i[3579])[-\s]*(\d{3,5})/gi),
+  ].map((m) => m[1]);
+}
+function authority(item) {
+  return /(^|\.)(nvidia\.com|intel\.com|amd\.com|microsoft\.com|apple\.com)$/.test(
+    new URL(item.url).hostname,
+  )
+    ? 1
+    : /(^|\.)(techpowerup\.com|tomshardware\.com|anandtech\.com|gamersnexus\.net|rtings\.com|pcmag\.com|notebookcheck\.net|techspot\.com)$/.test(
+          new URL(item.url).hostname,
+        )
+      ? 0.5
+      : 0;
 }
 function cleanUrl(raw, base) {
   try {
@@ -44,7 +64,8 @@ function cleanUrl(raw, base) {
     if (/(^|\.)(duckduckgo\.com|bing\.com)$/.test(url.hostname)) return null;
     url.hash = '';
     for (const key of [...url.searchParams.keys()])
-      if (/^(utm_|fbclid$|gclid$)/.test(key)) url.searchParams.delete(key);
+      if (/^(utm_|fbclid$|gclid$|tag$|ascsubtag$|affiliate|ref$)/.test(key))
+        url.searchParams.delete(key);
     return url.href;
   } catch {
     return null;
@@ -143,15 +164,16 @@ async function searchPublic(get, query, signal, alternatives = []) {
   // A second word can disambiguate a leading city/generic name when an engine
   // silently broadens the query. No command/team/site-specific rules.
   const rotated = words.length > 1 ? [words[1], words[0], ...words.slice(2)].join(' ') : query;
-  const queries = [...new Set([query, rotated, ...focused])].slice(0, 3);
+  const queries = [...new Set([query, ...focused, rotated])].slice(0, 3);
   const jobs = queries.map((q) => [
     'bing',
     'https://www.bing.com/search?format=rss&q=' + encodeURIComponent(q),
   ]);
-  jobs.push([
-    'bing-news',
-    'https://www.bing.com/news/search?format=rss&q=' + encodeURIComponent(query),
-  ]);
+  for (const q of queries)
+    jobs.push([
+      'bing-news',
+      'https://www.bing.com/news/search?format=rss&q=' + encodeURIComponent(q),
+    ]);
   jobs.push(['duckduckgo', 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query)]);
   jobs.push([
     'wikipedia',
@@ -174,15 +196,43 @@ async function searchPublic(get, query, signal, alternatives = []) {
     }),
   );
   const timeSensitive = /\b(latest|current|today|recent|news|updates?)\b/i.test(query);
+  const productEvidence =
+    productIdentifiers(query).length > 0 && /spec|review|performance|benchmark|site:/i.test(query);
+  const restricted = [...query.matchAll(/\bsite:([a-z0-9.-]+)/gi)].map((m) => m[1].toLowerCase());
   const ranked = batches
     .flat()
     .map((r) => ({ ...r, relevance: relevance(r, query) }))
     .filter((r) => r.relevance > 0)
+    .filter(
+      (r) =>
+        !restricted.length ||
+        restricted.some(
+          (h) => new URL(r.url).hostname === h || new URL(r.url).hostname.endsWith('.' + h),
+        ),
+    )
+    .filter(
+      (r) =>
+        !productEvidence ||
+        (!/\b(?:leak|rumou?r|alleged|reportedly|deal|save|discount|price in india)\b/i.test(
+          r.title,
+        ) &&
+          !/(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|bestbuy\.[a-z.]+|newegg\.[a-z.]+|walmart\.[a-z.]+)$/.test(
+            new URL(r.url).hostname,
+          ) &&
+          (authority(r) > 0 ||
+            (productIdentifiers(query).every((id) =>
+              terms(r.title + ' ' + new URL(r.url).pathname).includes(id),
+            ) &&
+              /spec|review|benchmark/i.test(r.title)))),
+    )
     .sort(
       (a, b) =>
         b.relevance +
+        (productEvidence ? authority(b) : 0) +
         (timeSensitive && b.searchProvider === 'bing-news' ? 0.1 : 0) -
-        (a.relevance + (timeSensitive && a.searchProvider === 'bing-news' ? 0.1 : 0)),
+        (a.relevance +
+          (productEvidence ? authority(a) : 0) +
+          (timeSensitive && a.searchProvider === 'bing-news' ? 0.1 : 0)),
     );
   return {
     results: diverse(ranked),
@@ -191,4 +241,14 @@ async function searchPublic(get, query, signal, alternatives = []) {
     failures,
   };
 }
-module.exports = { terms, relevance, cleanUrl, diverse, coveringLinks, parseSearch, searchPublic };
+module.exports = {
+  terms,
+  relevance,
+  cleanUrl,
+  diverse,
+  coveringLinks,
+  parseSearch,
+  searchPublic,
+  productIdentifiers,
+  authority,
+};

@@ -367,13 +367,44 @@ class BlenderService {
         message: '3D design simulated; no AI request or scene mutation was made.',
       };
     const previous = args.projectId ? this.manifest(args.projectId) : null;
+    const { scenePlan, toBatch } = require('./scene-plan.cjs');
+    const contract = zodToJsonSchema(previous ? batch : scenePlan);
+    const validatedPlan = (reply) => {
+      const value = planInput(reply);
+      return value.operations ? batch.parse(value) : toBatch(value);
+    };
+    const planInput = (reply) =>
+      reply.tool_calls?.find((c) => c.function.name === 'submit_blender_plan')?.function
+        .arguments ?? JSON.parse(reply.content.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+    const planningTools = [
+      {
+        type: 'function',
+        function: {
+          name: 'submit_blender_plan',
+          description: 'Return a flat validated operation batch; does not execute it.',
+          parameters: contract,
+        },
+      },
+    ];
+    const planningOptions = {
+      forceTool: { type: 'function', function: { name: 'submit_blender_plan' } },
+      outputTokens: previous ? 4500 : 3000,
+      localOnly: !!previous?.private,
+      profile: {
+        complexity: 'simple',
+        confidence: 1,
+        spatialReasoning: true,
+      },
+    };
     const plan = await this.ai.chat(
       [
         {
           role: 'system',
           content:
             'You are a CAD planner using validated Blender operations. Return the requested JSON only. Make a real mesh/material/light/camera/render project, never a placeholder. Units are meters unless specified. Rotations are degrees. Use cylinder/torus/cube/sphere, custom vertices and modifiers as needed. Create materials, assign them, add lighting, set a camera framed to the object, render at 768 square and export GLB. For an edit reuse projectId and existing object names, using transform/boolean/material changes; never recreate the whole scene. Engraving uses converted text as a boolean difference cutter intersecting the top surface. Do not output code, paths or arbitrary scripts. Exact operation contract: ' +
-            JSON.stringify(zodToJsonSchema(batch)),
+            (previous
+              ? JSON.stringify(contract)
+              : 'For a new scene return materials, primitive objects, lights and a camera following the function contract. The host turns that scene plan into validated Blender operations and always renders, saves the blend file and exports GLB. Use 6 to 10 objects for a simple recognizable illustration, at most 12. Choose a consistent coordinate convention: longest body dimension X, width Y, thickness Z, visible detail on the positive Z face. Dimensions are LOCAL before rotation; unrotated cylinders point along Z. For flat electronic devices use a thin rectangular box as the primary enclosure (thickness much smaller than width and length); cylinders are small face details, not the entire enclosure. Keep all details attached to the body, with coherent relative sizes. Avoid floating unrelated shapes. Frame the broad detail face in a three-quarter view from positive Z, with all three view-direction components substantial; never view a thin object edge-on. Do not return operations for this scene-plan contract. Use positive dimensions; name materials consistently. Camera orthographic scale must fit all objects and be aimed at their center.'),
         },
         {
           role: 'user',
@@ -387,19 +418,50 @@ class BlenderService {
             ),
         },
       ],
-      undefined,
+      planningTools,
       false,
       signal,
       undefined,
-      {
-        schema: zodToJsonSchema(batch),
-        jsonObject: true,
-        outputTokens: 4096,
-        localOnly: !!previous?.private,
-        profile: { complexity: 'complex', confidence: 1, spatialReasoning: true },
-      },
+      planningOptions,
     );
-    const input = batch.parse(JSON.parse(plan.content));
+    let input;
+    try {
+      input = validatedPlan(plan);
+    } catch (error) {
+      this.emit('blender-plan-diagnostic', {
+        stage: 'validation',
+        reason: require('../providers/diagnostics.cjs').safeError(error.message),
+        issues: error.issues?.map((i) => ({ code: i.code, path: i.path })),
+      });
+      const repaired = await this.ai.chat(
+        [
+          {
+            role: 'system',
+            content:
+              (previous
+                ? 'Correct the Blender operation batch. Operations are flat objects containing op and its fields. '
+                : 'Correct the new scene plan with materials, objects, lights and camera. Do not return operations. All dimensions must be positive; every object material must exactly match a name in materials. ') +
+              'Return the requested function result following this contract; no code or paths. Preserve the requested simple design. Contract: ' +
+              JSON.stringify(contract),
+          },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              goal: args.goal,
+              rejected: plan.tool_calls?.find((c) => c.function.name === 'submit_blender_plan')
+                ?.function.arguments,
+              issues: error.issues || error.message,
+            }),
+          },
+        ],
+        planningTools,
+        false,
+        signal,
+        undefined,
+        planningOptions,
+      );
+      input = validatedPlan(repaired);
+    }
     if (previous) input.projectId = previous.id;
     else delete input.projectId;
     let result = await this.run(input, signal);
@@ -428,7 +490,7 @@ class BlenderService {
             {
               role: 'system',
               content:
-                'Review this real Blender render against the goal. Return JSON accepted and concise findings. Check the provided dimensions, visual materials, framing, geometry warnings and requested text. Accept if the requested simple design is present. Do not require extra features beyond the goal, and do not claim manufacturing readiness.',
+                'Review this real Blender render against the goal. Return JSON accepted and concise findings. Judge visible pixels, not object names alone. Reject an edge-on view that hides the defining details, disconnected floating pieces, or a silhouette that is not recognizable as the requested subject. Check visual materials, framing, geometry warnings and requested text. Accept if the requested simple design is visibly present. Do not require extra features beyond the goal, and do not claim manufacturing readiness.',
             },
             {
               role: 'user',
@@ -452,18 +514,20 @@ class BlenderService {
           undefined,
           {
             schema: zodToJsonSchema(reviewSchema),
-            outputTokens: 2048,
+            outputTokens: 1536,
             manualVision: true,
             localOnly: !!previous?.private,
             profile: { modality: 'image', complexity: 'normal', confidence: 1 },
           },
         );
-        const review = reviewSchema.parse(JSON.parse(reviewed.content));
+        const review = reviewSchema.parse(
+          JSON.parse(reviewed.content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim()),
+        );
         reviews++;
         accepted = review.accepted;
         findings = review.findings;
         if (accepted || i + 1 >= (this.config().blenderIterations || 3)) break;
-        const correction = await this.ai.chat(
+        let correction = await this.ai.chat(
           [
             {
               role: 'system',
@@ -481,27 +545,101 @@ class BlenderService {
               }),
             },
           ],
-          undefined,
+          [
+            {
+              type: 'function',
+              function: {
+                name: 'submit_blender_plan',
+                description: 'Return validated corrections for the existing Blender scene.',
+                parameters: zodToJsonSchema(batch),
+              },
+            },
+          ],
           false,
           signal,
           undefined,
           {
-            schema: zodToJsonSchema(batch),
-            jsonObject: true,
-            outputTokens: 2048,
+            forceTool: { type: 'function', function: { name: 'submit_blender_plan' } },
+            outputTokens: 4500,
             localOnly: !!previous?.private,
-            profile: { complexity: 'simple', confidence: 1 },
+            profile: { complexity: 'simple', confidence: 1, spatialReasoning: true },
           },
         );
-        const changes = batch.parse(JSON.parse(correction.content));
-        if (changes.operations.length > 12)
-          throw Error('Correction exceeds the iteration operation limit');
+        const validateCorrection = (reply) => {
+          const changes = batch.parse(planInput(reply));
+          if (changes.operations.length > 12)
+            throw Error('Correction exceeds the iteration operation limit');
+          const existing = new Set(result.scene.objects.map((o) => o.name));
+          for (const op of changes.operations) {
+            if (
+              ['create_primitive', 'create_mesh', 'add_text', 'add_light'].includes(op.op) &&
+              existing.has(op.name)
+            )
+              throw Error(
+                'Object already exists: ' +
+                  op.name +
+                  '. Use transform/material/modifier operations to edit it, or a unique name for an additional mesh.',
+              );
+          }
+          return changes;
+        };
+        let changes;
+        try {
+          changes = validateCorrection(correction);
+        } catch (error) {
+          signal?.throwIfAborted();
+          correction = await this.ai.chat(
+            [
+              {
+                role: 'system',
+                content:
+                  'Repair this Blender correction batch. Do not recreate existing named objects. Use transform/material/modifier operations for them; added geometry must have unique names. Preserve the actual project, correct the visual findings, and end with render and GLB export. At most twelve operations. Return the function arguments only.',
+              },
+              {
+                role: 'user',
+                content: JSON.stringify({
+                  goal: args.goal,
+                  findings: review.findings,
+                  scene: result.scene,
+                  invalidPlan: planInput(correction),
+                  validationError: error.message,
+                }),
+              },
+            ],
+            [
+              {
+                type: 'function',
+                function: {
+                  name: 'submit_blender_plan',
+                  description: 'Correct an existing scene without duplicate names.',
+                  parameters: zodToJsonSchema(batch),
+                },
+              },
+            ],
+            false,
+            signal,
+            undefined,
+            {
+              forceTool: { type: 'function', function: { name: 'submit_blender_plan' } },
+              outputTokens: 4500,
+              localOnly: !!previous?.private,
+              profile: { complexity: 'simple', confidence: 1, spatialReasoning: true },
+            },
+          );
+          changes = validateCorrection(correction);
+        }
         result = await this.run(
           { projectId: result.projectId, operations: changes.operations },
           signal,
         );
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
+        this.emit('blender-plan-diagnostic', {
+          stage: reviews ? 'correction' : 'visual-review',
+          code: error.code || error.name,
+          reason: require('../providers/diagnostics.cjs').safeError(error.message),
+          issues: error.issues?.map((issue) => ({ code: issue.code, path: issue.path })),
+        });
         findings = reviews
           ? [
               ...findings,

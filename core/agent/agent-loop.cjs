@@ -51,7 +51,7 @@ class AgentLoop {
     this.controller = new AbortController();
     this.safety.resume();
     this.executor.host?.beginTask?.(text);
-    const deadline = setTimeout(
+    let deadline = setTimeout(
       () => this.controller.abort(Error('Task timed out')),
       this.config().agentTaskTimeout || 180000,
     );
@@ -86,9 +86,24 @@ class AgentLoop {
     this.save();
     this.emit('state', 'THINKING');
     try {
-      this.taskProfile = await this.ai.beginTask?.(text, this.controller.signal, this.privateTask);
+      this.taskProfile = await this.ai.beginTask?.(
+        text,
+        this.controller.signal,
+        this.privateTask && text.length <= 220,
+      );
       this.active.profile = this.taskProfile;
-      await this.run();
+      if (text.length > 220 && this.ai.beginTask && this.config().routerMode !== 'force-model') {
+        const graph = new (require('./task-graph.cjs').TaskGraph)(this);
+        const plan = await graph.plan(text);
+        if (plan.nodes.length >= 3) {
+          clearTimeout(deadline);
+          deadline = setTimeout(
+            () => this.controller.abort(Error('Task graph timed out')),
+            this.config().agentGraphTimeout || 900000,
+          );
+          await graph.run(plan);
+        } else await this.run();
+      } else await this.run();
     } catch (error) {
       if (!this.cancelled) {
         this.audit.write('agent-error', { status: 'failed', error: error.code || error.message });
@@ -786,6 +801,12 @@ class AgentLoop {
         .filter((s) => ['pending', 'waiting', 'running'].includes(s.status))
         .forEach((s) => {
           s.status = 'cancelled';
+        });
+      this.active.graph
+        ?.filter((n) => ['PENDING', 'RUNNING'].includes(n.state))
+        .forEach((n) => {
+          n.state = 'SKIPPED';
+          n.error = 'Task cancelled.';
         });
       this.save();
     }

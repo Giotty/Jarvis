@@ -3,6 +3,7 @@ const fs = require('node:fs'),
 const { AIProvider, ProviderError, json, sse, calls } = require('./base.cjs');
 const { catalog } = require('./nvidia-models.cjs');
 const { HostedBudget } = require('./hosted-budget.cjs');
+const { trace, metadata: responseMetadata } = require('./diagnostics.cjs');
 const clean = (text) =>
   String(text || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -10,7 +11,15 @@ const clean = (text) =>
     .trim();
 function input(messages) {
   const out = [];
+  // Several NIM chat templates keep only one system turn. Preserve both the
+  // host JSON contract and the task instructions in that single turn.
+  const system = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => m.content || '')
+    .join('\n\n');
+  if (system) out.push({ role: 'system', content: system });
   for (const m of messages) {
+    if (m.role === 'system') continue;
     if (m.role === 'assistant' && m._native?.nvidia) {
       out.push(structuredClone(m._native.nvidia));
       continue;
@@ -46,18 +55,41 @@ function input(messages) {
 function normalize(data) {
   const choice = data?.choices?.[0],
     m = choice?.message;
-  if (!m || !['stop', 'tool_calls', undefined].includes(choice.finish_reason))
+  if (!m || !['stop', 'tool_calls', 'length', undefined].includes(choice.finish_reason))
     throw new ProviderError('incomplete_response');
   const tool_calls = calls(m.tool_calls);
   const content = clean(m.content);
   if (!content && !tool_calls.length) throw new ProviderError('empty_response');
+  if (tool_calls.some((t) => t.function.arguments?._invalidJSON))
+    throw new ProviderError('malformed_tool_call');
   return {
     role: 'assistant',
     content,
     tool_calls,
+    truncated: choice.finish_reason === 'length',
     _native: { nvidia: { ...m, content } },
     usage: { input: data.usage?.prompt_tokens || 0, output: data.usage?.completion_tokens || 0 },
   };
+}
+function compactContract(schema, depth = 0) {
+  if (schema.anyOf || schema.oneOf || schema.$ref)
+    return { type: 'object', additionalProperties: true };
+  if (schema.type === 'array')
+    return { type: 'array', items: compactContract(schema.items || {}, depth + 1) };
+  if (schema.type === 'object' || schema.properties)
+    if (depth > 3) return { type: 'object', additionalProperties: true };
+  if (schema.type === 'object' || schema.properties)
+    return {
+      type: 'object',
+      properties: Object.fromEntries(
+        Object.entries(schema.properties || {}).map(([k, v]) => [k, compactContract(v, depth + 1)]),
+      ),
+      ...(schema.required ? { required: schema.required } : {}),
+      additionalProperties: schema.additionalProperties !== false,
+    };
+  return Object.fromEntries(
+    Object.entries(schema).filter(([key]) => ['type', 'enum'].includes(key)),
+  );
 }
 class ReasoningFilter {
   constructor() {
@@ -115,6 +147,9 @@ class NvidiaProvider extends AIProvider {
               testedAt: p.testedAt,
               streamOnly: p.streamOnly === true,
               reasoningMode: ['max', 'low'].includes(p.reasoningMode) ? p.reasoningMode : undefined,
+              schemaMode: p.schemaMode === 'prompt' ? 'prompt' : undefined,
+              preferNonstream: p.preferNonstream === true,
+              toolSchemaMode: p.toolSchemaMode === 'compact' ? 'compact' : undefined,
               status: p.status === 'available' ? 'available' : 'unavailable',
             };
       } catch {
@@ -170,33 +205,51 @@ class NvidiaProvider extends AIProvider {
       return { online: false, models: [] };
     }
   }
-  async rateLimited(response) {
+  async rateLimited(response, model) {
     const retry = response.headers.get('retry-after');
     const seconds = /^\d+$/.test(retry || '')
       ? Number(retry)
       : Math.max(0, (Date.parse(retry || '') - Date.now()) / 1000);
-    this.cooldownUntil =
+    this.modelCooldowns ||= new Map();
+    this.modelCooldowns.set(
+      model,
       Date.now() +
-      Math.max(1000, Math.min(3600000, Number.isFinite(seconds) ? seconds * 1000 : 60000));
+        Math.max(1000, Math.min(3600000, Number.isFinite(seconds) ? seconds * 1000 : 60000)),
+    );
+    // Exposed status remains useful, while enforcement is per model.
+    this.cooldownUntil = Math.max(...this.modelCooldowns.values());
   }
   async chat(messages, tools, vision, signal, onDelta, options = {}) {
-    if ((this.cooldownUntil || 0) > Date.now()) throw new ProviderError('http_429');
     const c = this.config(),
       model =
         options.model || (this.local ? c.nimModel : vision ? c.nvidiaVisionModel : c.nvidiaModel);
+    if ((this.modelCooldowns?.get(model) || 0) > Date.now()) throw new ProviderError('http_429');
     if (!/^[\w.-]+\/[\w.-]+$/.test(model || '')) throw new ProviderError('missing_model', false);
     if (this.local && !c.nimEnabled) throw new ProviderError('nim_disabled', false);
     if (!this.local && (!c.nvidiaFreeEndpoint || !catalog.find((m) => m.id === model)?.free))
       throw new ProviderError('free_endpoint_unverified', false);
     const metadata = catalog.find((m) => m.id === model),
       max = Math.max(
-        metadata?.reasoning === 'effort' ? 1024 : 256,
+        metadata?.reasoning === 'effort' ? (vision ? 4096 : 1024) : 256,
         Math.min(8192, options.outputTokens || 2048),
       );
-    const stream = !!onDelta || this.profiles[model]?.streamOnly === true;
+    const stream =
+      options.stream ??
+      (!this.profiles[model]?.preferNonstream &&
+        (!!onDelta || this.profiles[model]?.streamOnly === true));
     // Large union grammars are rejected by some hosted implementations. Use
     // JSON mode for those contracts and keep validation in the host tool schema.
     const contract = options.schema && JSON.stringify(options.schema);
+    const promptSchema = options.promptSchema || this.profiles[model]?.schemaMode === 'prompt';
+    const complexTools = tools?.some((t) => JSON.stringify(t.function.parameters).length > 5000);
+    const compactTools =
+      complexTools && (options.compactTools || this.profiles[model]?.toolSchemaMode === 'compact');
+    const adaptedTools = compactTools
+      ? tools.map((t) => ({
+          ...t,
+          function: { ...t.function, parameters: compactContract(t.function.parameters) },
+        }))
+      : tools;
     const jsonObject =
       options.jsonObject ||
       (contract &&
@@ -204,21 +257,42 @@ class NvidiaProvider extends AIProvider {
     const body = {
       model,
       messages: input(
-        jsonObject && contract
-          ? [
-              {
-                role: 'system',
-                content: 'Return only a JSON object satisfying this contract: ' + contract,
-              },
-              ...messages,
-            ]
-          : messages,
+        (() => {
+          const prepared =
+            (jsonObject || promptSchema) && contract
+              ? [
+                  {
+                    role: 'system',
+                    content: 'Return only a JSON object satisfying this contract: ' + contract,
+                  },
+                  ...messages,
+                ]
+              : messages;
+          return compactTools
+            ? [
+                {
+                  role: 'system',
+                  content:
+                    'Tool argument contracts are enforced by the host. Return actual argument VALUES matching these complete contracts, never their JSON schemas: ' +
+                    JSON.stringify(
+                      tools.map((t) => ({
+                        name: t.function.name,
+                        parameters: t.function.parameters,
+                      })),
+                    ),
+                },
+                ...prepared,
+              ]
+            : prepared;
+        })(),
       ),
       max_tokens: max,
       stream,
       ...(stream ? { stream_options: { include_usage: true } } : {}),
-      ...(tools?.length ? { tools, tool_choice: options.forceTool || 'auto' } : {}),
-      ...(options.schema
+      ...(adaptedTools?.length
+        ? { tools: adaptedTools, tool_choice: options.forceTool || 'auto' }
+        : {}),
+      ...(options.schema && !promptSchema
         ? {
             response_format: jsonObject
               ? { type: 'json_object' }
@@ -238,15 +312,74 @@ class NvidiaProvider extends AIProvider {
         ? {
             chat_template_kwargs: { enable_thinking: !!options.reasoning },
             ...(metadata.reasoning === 'budget' && options.reasoning
-              ? { reasoning_budget: Math.min(2048, max / 2) }
+              ? { reasoning_budget: Math.floor(Math.min(1024, max / 4)) }
               : {}),
           }
         : {}),
     };
     const headers = this.headers();
-    if (!this.local) this.budget.take(signal);
-    const response = await this.request(this.base() + '/chat/completions', body, headers, signal);
-    if (!stream) return normalize(await json(response));
+    if (!this.local)
+      await (this.budget.reserve ? this.budget.reserve(signal) : this.budget.take(signal));
+    let response;
+    try {
+      response = await this.request(this.base() + '/chat/completions', body, headers, signal);
+    } catch (error) {
+      if (complexTools && !compactTools && error.code === 'http_500') {
+        trace(this, 'adapter-recovery', {
+          model,
+          code: error.code,
+          from: 'complex-tool-schema',
+          to: 'compact-tool-schema-with-host-validation',
+        });
+        const reply = await this.chat(messages, tools, vision, signal, onDelta, {
+          ...options,
+          compactTools: true,
+        });
+        if (this.profiles[model]) {
+          this.profiles[model].toolSchemaMode = 'compact';
+          this.saveProfiles();
+        }
+        return reply;
+      }
+      // NIM can return 500 from its own constrained-output parser. Change the
+      // rejected format on the SAME model once; keep the host contract and
+      // validation, and never resend that failing grammar to every fallback.
+      if (
+        body.response_format &&
+        error.code === 'http_500' &&
+        /parse chat completion response/i.test(error.diagnostic?.error || '')
+      ) {
+        trace(this, 'adapter-recovery', {
+          model,
+          code: error.code,
+          from: 'constrained-json',
+          to: 'streamed-prompt-json',
+        });
+        const reply = await this.chat(messages, tools, vision, signal, onDelta, {
+          ...options,
+          promptSchema: true,
+          stream: true,
+        });
+        if (options.schema) {
+          try {
+            JSON.parse(reply.content);
+          } catch {
+            throw new ProviderError('malformed_response');
+          }
+        }
+        if (this.profiles[model]) {
+          this.profiles[model].schemaMode = 'prompt';
+          this.saveProfiles();
+        }
+        return reply;
+      }
+      throw error;
+    }
+    if (!stream) {
+      const reply = normalize(await json(response));
+      if (onDelta && reply.content) onDelta(reply.content);
+      return reply;
+    }
     const filter = new ReasoningFilter(),
       toolMap = new Map();
     let content = '',
@@ -284,8 +417,34 @@ class NvidiaProvider extends AIProvider {
       signal,
     );
     const last = filter.push('', true);
+    trace(this, 'stream-parsed', {
+      ...responseMetadata.get(response)?.diagnostic,
+      finish,
+      contentLength: content.length,
+      reasoningLength: reasoning.length,
+      toolCount: toolMap.size,
+    });
     if (last) onDelta?.(last);
     if (!finish) throw new ProviderError('stream_interrupted');
+    if (!clean(content) && !toolMap.size && finish === 'stop' && !options.transportRecovery) {
+      trace(this, 'adapter-recovery', {
+        model,
+        code: 'empty_response',
+        from: 'empty-stream',
+        to: 'nonstream',
+      });
+      const reply = await this.chat(messages, tools, vision, signal, onDelta, {
+        ...options,
+        stream: false,
+        transportRecovery: true,
+      });
+      if (this.profiles[model]) {
+        this.profiles[model].preferNonstream = true;
+        this.profiles[model].streamOnly = false;
+        this.saveProfiles();
+      }
+      return reply;
+    }
     return normalize({
       choices: [
         {
@@ -479,4 +638,4 @@ class NvidiaProvider extends AIProvider {
 function metadataReasoning(model) {
   return ['budget', 'template', 'effort'].includes(catalog.find((m) => m.id === model)?.reasoning);
 }
-module.exports = { NvidiaProvider, input, normalize, clean, ReasoningFilter };
+module.exports = { NvidiaProvider, input, normalize, clean, ReasoningFilter, compactContract };

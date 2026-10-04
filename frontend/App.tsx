@@ -497,7 +497,13 @@ export function App() {
           setPlugins(e.data as Plugin[]);
           break;
         case 'provider-fallback':
-          report('The AI connection is unavailable. Trying the configured fallback.');
+          report(
+            ['NETWORK_OFFLINE', 'TIMEOUT', 'SERVER_ERROR'].includes(
+              (e.data as { category?: string }).category || 'NETWORK_OFFLINE',
+            )
+              ? 'The AI connection is unavailable. Trying the configured fallback.'
+              : `AI ${(e.data as { category?: string }).category?.toLowerCase().replaceAll('_', ' ') || 'request failed'}. Trying a compatible fallback.`,
+          );
           break;
         case 'blender-progress': {
           const p = e.data as { stage: string; revision?: number; iteration?: number };

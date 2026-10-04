@@ -1,5 +1,76 @@
 # Verification
 
+## October 4 — acceptance repair (0.6.1)
+
+The exact owner GPU/research/workspace/Blender request was reproduced with real Windows hardware and the encrypted NVIDIA credential. The first reproduction failed in 22.5 seconds. Intermediate runs are development evidence, not final passes: an all-success graph was subsequently rejected on manual review for unrelated images and an edge-on render.
+
+### Root causes and diagnostic evidence
+
+The approximately five historical warnings cannot each be reconstructed without their old request logs. The reproduction showed two Kimi `tools_unsupported` failures **before HTTP** and Ultra **HTTP 200**, `finish_reason=length`, with a 1,024-token allowance exhausted by reasoning. Neither was an authentication outage. Authenticated discovery at `https://integrate.api.nvidia.com/v1/models` succeeded and listed all six IDs. Inference uses `https://integrate.api.nvidia.com/v1/chat/completions`.
+
+Additional actual repair runs found:
+
+| Evidence                                                | Fix / classification                                                                                                                    |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Unproven native tools selected for Kimi                 | Capability rejection before HTTP; choose a compatible observed tool model for that step, preserving Kimi text/vision.                   |
+| Length-truncated reasoning response                     | Separate reasoning/content and use model-specific budgets; never execute truncated tool JSON.                                           |
+| Native large union grammar HTTP 500                     | One compact transport grammar retry; preserve full system contract and strict host validation.                                          |
+| Native constrained JSON/template failure                | One changed-format JSON retry and remembered model transport preference.                                                                |
+| Separate system instructions lost in model templates    | Combine host contracts into one system message.                                                                                         |
+| Empty Kimi output                                       | `MALFORMED_RESPONSE`, bounded alternate transport then compatible fallback.                                                             |
+| Ollama image fallback HTTP 400, base64 byte 4           | Remove the canonical data-URL prefix before sending local raw base64.                                                                   |
+| Fallback crashed assigning read-only DOMException.code  | Wrap transport exceptions; preserve `TIMEOUT` and continue fallback.                                                                    |
+| Concurrent budget-storage collision                     | Bounded asynchronous lock retry, preserving all counters/caps.                                                                          |
+| HTTP 403 sources / wrong article behind a plausible URL | Reject unreadable and mismatched-title evidence; try alternative sources and observed official specification links.                     |
+| Unsupported facts/charts/irrelevant images              | Extract actual table values and literal source excerpts; match product identities and retain ownership/citations.                       |
+| Invalid scene materials/dimensions or hidden details    | Strict scene contract, bounded corrective planning, consistent local axes, safe bevels, measured framing and pixel-based vision review. |
+| Desktop EPIPE from a closed logging pipe                | Handle only EPIPE on logging streams; other stream errors remain visible.                                                               |
+
+Diagnostics record request ID, provider/model, endpoint, request type, HTTP status, non-secret errors/categories, parameter names, image/tool counts, token allowance, finish and parsing outcome. No prompt/image/credential/private-file contents are logged. Rotating logs: `%APPDATA%\jarvis\logs\providers.jsonl`. Authentication failures do not repeatedly retry a bad key. Warnings remain enabled and distinguish auth/model/rate/timeout/payload/capability/stream/parser/network/server failures.
+
+An installed development run correctly rejected an unrecognizable scene; its correction failed because it recreated an existing named object. Corrections now validate collisions before execution and receive one bounded repair. Missing/truncated structured planner output also receives one changed-instruction retry with a larger allowance. These failures are not reported as acceptance passes.
+
+The old loop ended the full task after an incomplete source preview. The generic graph now tracks PENDING/RUNNING/SUCCEEDED/FAILED/BLOCKED/SKIPPED and allows independent creation/saving after recoverable research failure. Comparison research merges before display, required inputs are verified, and background research uses no browser UI. Blender render nodes are merged into design, which already renders/exports/verifies. Source cards and speech are separate. No hardware fixture or test-specific workflow is installed.
+
+### Actual six-model probes
+
+All rows used the real authenticated NVIDIA endpoint and small requests. Listed IDs do not prove inference availability.
+
+| Model                                   | Actual success                                                                                         | Genuine failures                                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | Nonstream text, streaming, forced function, JSON, reasoning; task planning/presentation/scene planning | Complex native grammar needed compact recovery.                                                                                     |
+| `nvidia/nemotron-3-ultra-550b-a55b`     | Nonstream text, streaming, forced function, JSON, reasoning; research recovery                         | A larger scene request timed out despite successful small probes.                                                                   |
+| `meta/muse-glimmer-30b`                 | Nonstream text, streaming, forced function, JSON                                                       | Earlier complex grammar timed out.                                                                                                  |
+| `moonshotai/kimi-k3`                    | Nonstream text; structured streamed vision of actual renders succeeded repeatedly                      | Stream/red-image/reasoning probes intermittently empty; native tools HTTP 500; native JSON timeout. No native tool success claimed. |
+| `deepseek-ai/deepseek-v4.1-flash`       | Authenticated model discovery                                                                          | Text, streaming, JSON, image and separately retried actual function request timed out at about 30 seconds.                          |
+| `z-ai/glm-5.3-flash`                    | Authenticated model discovery                                                                          | Text, streaming, JSON and function requests timed out at about 30 seconds.                                                          |
+
+Adapters apply Kimi `reasoning_effort`, Lightning `chat_template_kwargs.enable_thinking`/bounded `reasoning_budget`, Ultra's own thinking option, and simpler contracts for the others. Image messages only go to compatible vision routes. Providers were not disabled, local mode was not forced, and no paid request/resource/signup/billing change was made. Genuine availability problems remain explicit.
+
+### Verification scope
+
+249 JavaScript and 21 Python tests passed; ESLint, TypeScript and production Vite passed. Coverage includes generic graph continuation, CPU comparison ordering, article-title rejection, source tables/excerpts, malformed/truncated responses, adapters, timeout fallback, privacy/safety budgets, EPIPE and asset contracts. Vite's chunk-size advisory is not a build failure.
+
+Real hardware detection cross-checked Windows graphics information, CIM and `nvidia-smi`: NVIDIA GeForce RTX 4060, 8,188 MiB, driver 596.36. Official same-generation hierarchy chose RTX 4060 Ti. Research retrieved official NVIDIA, TechSpot and PCMag. Charts use actual specification cells, not invented FPS. Image bytes and provenance were verified.
+
+### Final actual release results
+
+**Overall installed acceptance: NOT PASS.** The code repair is installed and verified, but genuine live inference availability still prevents reliable full completion. No warning, provider or failed stage was hidden to obtain a pass.
+
+- The final source build executed the exact request successfully in **95,964 ms**, all eight graph nodes SUCCEEDED, nine workspace objects saved, **zero provider fallbacks**. It detected the real GPU, compared RTX 4060 with RTX 4060 Ti, created an actual sourced CUDA-core chart (3,072 / 4,352), loaded three attributed images, created `.blend` / PNG / GLB, performed actual vision review and received a real GLB-loaded renderer acknowledgment. Earlier source success took 75,949 ms. These are source-run successes, not a claim that subsequent installed runs passed.
+- Important published GPU values were independently inspected: NVIDIA's 8 GB / 115 W specifications agree with the retrieved PCMag board table; TechSpot also published 8 GB / 115 W and 3,072 shader cores. The source comparison chart itself uses one official NVIDIA paired table; its automatic `chartCrossChecked` flag was **false**. No FPS benchmark or cross-checked chart was invented.
+- A development installed run (**86,669 ms**) created/exported/loaded a real model, but vision rejected its silhouette and correction failed on a duplicate object name. The subsequent source fix validates correction collisions and performs one bounded repair before execution.
+- The current installed build's next exact run (**84,901 ms**) completed research/images/cards/chart/saving and created actual Blender exports with a loaded preview. It remained INCOMPLETE because Kimi returned empty output and local vision timed out, leaving visual review explicitly unverified.
+- The final installed exact run (**259,744 ms**) completed inspection/research/images/presentation/saving, but design planning timed out on Lightning, Ultra, Muse and finally Ollama. Design FAILED; dependent preview BLOCKED; the eight research objects still saved. These were actual `TIMEOUT` failures, not repeated false connection warnings. Authentication/model discovery continued to succeed. No paid route was attempted.
+- Installed **0.6.1.0** using the normal installer. Installer exit code 0; the installed `app.asar` SHA-256 matches the freshly packaged archive: `EC81F03136E78926B98561FD2C61CE3DC65C1FAD583DA4DEAE6E67082D79981D`. Packaging verified 91 application files against frozen source bytes and removed the default Electron app.
+- After restarting the installed application, a fresh Library read/open of the successful source-created **GPUs** entry verified **nine objects**, the saved model panel and actual GLB bytes; the screenshot visibly shows the rendered 3D asset. Entry: `0a35a946-4a74-4ff6-b0bb-ef433ea4a947`; project: `e1766bcd-7838-471f-b58c-4f404e794931`. This validates installed persistence/viewing, not a new installed generation pass. The folder is a JARVIS Library folder; original binary assets remain under `%APPDATA%\jarvis\3D`, with persisted references.
+- Manual render/screenshot inspection confirms a framed, coarse metallic/blue abstract shroud illustration. It has grain, simplistic geometry and a dominant cylinder; it is not a realistic GPU replica or polished CAD asset. The vision findings retain these limitations even when accepting a simple illustration.
+- Successful direct TEXT/STREAMING/TOOLS/STRUCTURED_OUTPUT probes were recorded into existing Lightning/Ultra/Muse capability profiles; no unsuccessful vision/tool probe was promoted as success. Owner TTS/microphone settings were restored after quiet test runs; warnings were captured throughout. Final owner settings: NVIDIA/AUTO, freeOnly true, mock false, Kokoro `bm_daniel`, TTS on, consequential confirmations on. The installed app was left open normally, without a debugging port.
+
+Launch **JARVIS** from the Windows Start menu or `%LOCALAPPDATA%\Programs\JARVIS\JARVIS.exe`. The code and local integrations are ready for manual use, but hosted-provider availability and complex model quality remain genuine limitations. Do not interpret the source passes as a 100% reliability claim.
+
+Limitations: inference and websites can genuinely timeout/block requests; all six models are not equally available. Generated models are illustrations, not manufacturing/print-ready geometry. No microphone input was enumerated, so live microphone/barge-in is unverified. Consequential-action confirmations remain enabled. Kokoro `bm_daniel` is preserved; cloud private files/clipboard/memory remain off; continuous screen monitoring remains local. NVIDIA's own budget is 300/day; Gemini's is 100/day. These are safety budgets, not vendor remaining-credit claims; counters/caps were not reset/increased for testing.
+
 ## October 3 — free NVIDIA routing and real Blender (0.6.0)
 
 - **225 JavaScript tests passed, zero failures; 21 Python tests passed.** ESLint, TypeScript, production Vite and Python worker syntax checks passed. The large Three.js chunk is lazy loaded for model cards; its build size warning is not a failed build. Coverage includes credential absence/invalid authentication, capability filtering, native tool continuation, streaming/reasoning sanitization, malformed responses, timeout/cancellation, rate-limit cooldown, paid-route blocking, fallback/escalation, concurrent daily-budget reservations, privacy/history restrictions, plugins, temporal research, single-observation screen descriptions and new-model focus with pinned cards.

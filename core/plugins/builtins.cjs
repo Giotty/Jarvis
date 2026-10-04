@@ -73,6 +73,7 @@ const categories = {
   roblox: ['find_roblox_games', 'play_roblox_game', 'launch_roblox_game'],
   system: [
     'get_system_stats',
+    'inspect_hardware',
     'list_running_apps',
     'media',
     'get_audio_state',

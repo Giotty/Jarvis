@@ -129,6 +129,21 @@ for a in job['operations']:
             data=bpy.data.cameras.new('JARVIS Camera');o=bpy.data.objects.new('JARVIS Camera',data);scene.collection.objects.link(o);scene.camera=o
         o.location=a['location'];o.rotation_euler=(Vector(a['target'])-o.location).to_track_quat('-Z','Y').to_euler();o.data.lens=a['lens']
         o.data.type='ORTHO' if a['orthographic'] else 'PERSP';o.data.ortho_scale=a['orthoScale']
+        if a.get('fit') and a['orthographic']:
+            bpy.context.view_layer.update()
+            corners=[mesh.matrix_world @ Vector(corner) for mesh in scene.objects if mesh.type=='MESH' for corner in mesh.bound_box]
+            if not corners: raise ValueError('Cannot frame an empty scene')
+            low=Vector(tuple(min(v[i] for v in corners) for i in range(3)))
+            high=Vector(tuple(max(v[i] for v in corners) for i in range(3)))
+            center=(low+high)/2
+            direction=o.location-Vector(a['target'])
+            if direction.length<1e-6: direction=Vector((1,-1,1))
+            o.location=center+direction.normalized()*max((high-low).length*3,0.1)
+            o.rotation_euler=(center-o.location).to_track_quat('-Z','Y').to_euler()
+            inverse=o.rotation_euler.to_matrix().transposed()
+            projected=[inverse @ (v-center) for v in corners]
+            o.data.ortho_scale=max(max(v.x for v in projected)-min(v.x for v in projected),max(v.y for v in projected)-min(v.y for v in projected),0.001)*1.3
+            o.data.clip_start=0.0001;o.data.clip_end=max(100,(high-low).length*10)
     elif op=='render':
         if 'exposure' in a: scene.view_settings.exposure=a['exposure']
         if not scene.camera: raise ValueError('Set a camera before rendering')

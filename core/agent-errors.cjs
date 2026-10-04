@@ -1,4 +1,19 @@
 function publicError(error) {
+  const categories = {
+    AUTH_ERROR: 'The AI credential was rejected. Check the saved key in Settings.',
+    MODEL_NOT_FOUND: 'The selected AI model is unavailable at its configured endpoint.',
+    RATE_LIMIT: 'The provider request limit was reached. A compatible fallback will be used.',
+    BAD_REQUEST: 'The AI provider rejected the request format.',
+    UNSUPPORTED_PARAMETER: 'The AI provider rejected an unsupported parameter.',
+    VISION_NOT_SUPPORTED: 'The selected model cannot process images.',
+    TOOLS_NOT_SUPPORTED: 'The selected model cannot call tools.',
+    STREAM_PARSE_ERROR: 'The AI response stream could not be read.',
+    MALFORMED_RESPONSE: 'The AI provider returned an incomplete or invalid response.',
+    ROUTER_CAPABILITY_MISMATCH:
+      'No configured model supports the capabilities required for this step.',
+    SERVER_ERROR: 'The AI provider reported a server error.',
+  };
+  if (categories[error?.category]) return categories[error.category];
   const message = String(error?.message || error || '');
   if (error?.name === 'TimeoutError' || /timed out|timeout|too long/i.test(message))
     return 'That took too long. The local model or service may be busy; you can try again or choose another provider.';

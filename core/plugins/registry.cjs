@@ -249,6 +249,12 @@ class PluginRegistry {
       return result(raw);
     } catch (error) {
       if (signal?.aborted) throw error;
+      this.emit('tool-diagnostic', {
+        tool: action.tool,
+        code: error.code || error.name,
+        error: require('../providers/diagnostics.cjs').safeError(error.message),
+        issues: error.issues?.map((i) => ({ code: i.code, path: i.path })),
+      });
       return failure(
         error,
         timeout.aborted ? 'tool_timeout' : 'plugin_failed',

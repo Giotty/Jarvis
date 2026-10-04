@@ -37,8 +37,10 @@ const catalog = [
     role: 'fallback',
     visionDocumented: false,
     reasoning: 'none',
-    free: false,
-    evidence: 'https://build.nvidia.com/z-ai/glm-5.3-flash',
+    free: true,
+    // Listed by authenticated /models. NVIDIA's API Catalog trial covers any
+    // available catalog model; its Flash build page is currently unpublished.
+    evidence: 'https://nvidia.github.io/GenerativeAIExamples/0.7.0/api-catalog.html',
   },
   {
     id: 'meta/muse-glimmer-30b',

@@ -46,6 +46,8 @@ function profileFacts(profile, { vision, tools, structured, localOnly, failures 
 }
 function roleFor(profile, mode = 'auto') {
   if (profile.vision) return 'vision';
+  if (profile.structuredOutput && !profile.deepReasoning && profile.previousFailures < 2)
+    return 'fast';
   if (
     profile.previousFailures >= 2 ||
     (mode === 'prefer-quality' && ['complex', 'very_complex'].includes(profile.complexity))

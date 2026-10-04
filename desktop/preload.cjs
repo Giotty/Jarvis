@@ -27,6 +27,7 @@ const methods = [
   'providerStatus',
   'blenderStatus',
   'modelAsset',
+  'modelPreviewStatus',
   'probeProvider',
   'cancelProviderProbe',
   'providerCapabilities',

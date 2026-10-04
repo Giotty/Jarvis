@@ -171,7 +171,16 @@ class Ollama {
       '/api/chat',
       {
         model,
-        messages,
+        messages: messages.map((message) => ({
+          ...message,
+          ...(message.images?.length
+            ? {
+                images: message.images.map((image) =>
+                  String(image).replace(/^data:image\/[a-z0-9.+-]+;base64,/i, ''),
+                ),
+              }
+            : {}),
+        })),
         tools,
         stream: Boolean(onDelta),
         keep_alive: '2m',

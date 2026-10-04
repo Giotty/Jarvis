@@ -9,6 +9,42 @@ const { BlenderService, inside, validateGlb } = require('../core/blender/service
 const { ResearchWorkspace, ResearchLibrary } = require('../core/workspace.cjs');
 const { Store } = require('../core/store.cjs');
 const { SemanticMemory } = require('../core/semantic-memory.cjs');
+test('New illustration plans use solid geometry, size-safe bevels and measured camera framing', () => {
+  const { toBatch, scenePlan } = require('../core/blender/scene-plan.cjs');
+  const plan = {
+    title: 'Small processor',
+    materials: [
+      {
+        name: 'Metal',
+        color: [0.1, 0.2, 0.3, 1],
+        metallic: 0.8,
+        roughness: 0.3,
+        emission: [0, 0, 0, 1],
+        strength: 0,
+      },
+    ],
+    objects: [
+      {
+        name: 'Body',
+        kind: 'cube',
+        location: [0, 0, 0],
+        rotation: [0, 0, 0],
+        dimensions: [0.2, 0.1, 0.02],
+        material: 'Metal',
+        bevel: 0.5,
+      },
+    ],
+    lights: [{ name: 'Key', location: [1, 1, 2], energy: 500, size: 1 }],
+    camera: { location: [3, 3, 3], target: [0, 0, 0], orthoScale: 10 },
+  };
+  const result = toBatch(plan);
+  assert.equal(result.operations.find((o) => o.op === 'set_camera').fit, true);
+  assert.equal(result.operations.find((o) => o.op === 'bevel').amount, 0.005);
+  assert.equal(
+    scenePlan.safeParse({ ...plan, objects: [{ ...plan.objects[0], kind: 'plane' }] }).success,
+    false,
+  );
+});
 test('Blender schema blocks arbitrary scripts, unbounded geometry and unsafe numbers', () => {
   for (const input of [
     { operations: [{ op: 'execute_script', code: 'anything' }] },
