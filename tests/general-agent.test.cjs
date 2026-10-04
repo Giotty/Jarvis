@@ -798,6 +798,31 @@ test('restricted task contents stay local even after context pruning removes the
   assert.equal(routing[2].localOnly, true);
   assert.equal(s.agent.context.history.at(-1)._privacy, 'sensitive');
 });
+
+test('An unrelated saved workspace neither forces local routing nor uploads its private metadata', async () => {
+  const s = setup({ cloudEnabled: true, provider: 'openai', cloudFiles: false });
+  s.executor.host.workspace = {
+    endTask: () => {},
+    summary: () => ({
+      fromLibrary: true,
+      savedId: 'private-item',
+      topic: 'PRIVATE_LIBRARY_TOPIC',
+      modules: [{ title: 'PRIVATE_CARD_TITLE' }],
+    }),
+  };
+  let captured, options;
+  s.ai.chat = async (messages, _tools, _vision, _signal, _delta, route) => {
+    captured = messages;
+    options = route;
+    return answer('Paris is the capital of France.');
+  };
+  await s.agent.command('What is the capital of France?');
+  assert.equal(s.agent.active.status, 'completed');
+  assert.equal(options.localOnly, false);
+  assert(!JSON.stringify(captured).includes('PRIVATE_LIBRARY_TOPIC'));
+  assert(!JSON.stringify(captured).includes('PRIVATE_CARD_TITLE'));
+  assert(captured.some((m) => m.content.includes('contents have been withheld')));
+});
 test('approval expiry cancels the waiting task and releases the next command', async () => {
   const s = setup(),
     requireApproval = s.agent.safety.require.bind(s.agent.safety);

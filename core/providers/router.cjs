@@ -87,6 +87,7 @@ class ProviderRouter {
       model: '',
       processing: 'LOCAL',
     };
+    this.backgroundUsage = { ...this.usage };
     this.geminiBudget = new GeminiBudget({
       config,
       directory: budgetDirectory,
@@ -94,7 +95,7 @@ class ProviderRouter {
       emit: (type, data) => {
         if (type === 'gemini-budget') {
           this.usage.geminiBudget = data;
-          this.emit('ai-usage', { ...this.usage });
+          this.emit('ai-usage', this.usageSnapshot());
         } else this.emit(type, data);
       },
     });
@@ -104,6 +105,7 @@ class ProviderRouter {
   usageSnapshot() {
     return {
       ...this.usage,
+      background: { ...this.backgroundUsage },
       geminiBudget: this.geminiBudget.snapshot(),
       nvidiaBudget: this.providers.nvidia?.budget.snapshot(),
     };
@@ -335,6 +337,9 @@ class ProviderRouter {
     }
   }
   async chat(messages, tools, vision = false, signal, onDelta, options = {}) {
+    // Passive observations are always local and never replace task routing status.
+    if (options.background) options = { ...options, localOnly: true };
+    const usage = options.background ? this.backgroundUsage : this.usage;
     const c = this.config();
     const privateTask = messages.some(
       (m) =>
@@ -359,6 +364,19 @@ class ProviderRouter {
     if (privateTask) primary = 'ollama';
     const preferLocal = c.preferLocalSimple && options.simple;
     if (preferLocal) primary = 'ollama';
+    const localReason = options.background
+      ? 'screen-monitoring'
+      : privateTask
+        ? 'private-content'
+        : localPolicy
+          ? 'local-policy'
+          : options.localOnly
+            ? 'requested-local'
+            : preferLocal
+              ? 'simple-task-local'
+              : !c.cloudEnabled
+                ? 'configured-local'
+                : 'configured';
     if (
       (vision || messages.some((m) => m.images?.length)) &&
       c.visionProvider &&
@@ -523,8 +541,8 @@ class ProviderRouter {
           hasImages &&
           (!cloud || allowImage)
         ) {
-          this.usage.requests++;
-          if (cloud) this.usage.cloudRequests++;
+          usage.requests++;
+          if (cloud) usage.cloudRequests++;
           const caption = await this.providers[id].chat(
             [
               {
@@ -541,10 +559,15 @@ class ProviderRouter {
             undefined,
             { model, outputTokens: 1024 },
           );
-          this.usage.inputTokens += caption.usage?.input || 0;
-          this.usage.outputTokens += caption.usage?.output || 0;
-          Object.assign(this.usage, { provider: id, model, processing: cloud ? 'CLOUD' : 'LOCAL' });
-          this.emit('ai-usage', { ...this.usage });
+          usage.inputTokens += caption.usage?.input || 0;
+          usage.outputTokens += caption.usage?.output || 0;
+          Object.assign(usage, {
+            provider: id,
+            model,
+            processing: cloud ? 'CLOUD' : 'LOCAL',
+            routeReason: id === primary ? localReason : 'fallback',
+          });
+          this.emit('ai-usage', this.usageSnapshot());
           return this.chat(
             messages
               .map(({ images: _removed, ...m }) => m)
@@ -587,14 +610,15 @@ class ProviderRouter {
             });
           useVision = false;
         }
-        this.usage.requests++;
-        if (cloud) this.usage.cloudRequests++;
-        Object.assign(this.usage, {
+        usage.requests++;
+        if (cloud) usage.cloudRequests++;
+        Object.assign(usage, {
           provider: id,
           model,
           processing: cloud ? 'CLOUD' : 'LOCAL',
+          routeReason: id === primary ? localReason : 'fallback',
         });
-        this.emit('ai-usage', { ...this.usage });
+        this.emit('ai-usage', this.usageSnapshot());
         const reply = await this.providers[id].chat(
           selected,
           tools,
@@ -622,10 +646,10 @@ class ProviderRouter {
           cooldownUntil: 0,
           status: 'ready',
         });
-        this.usage.inputTokens += reply.usage?.input || 0;
-        this.usage.outputTokens += reply.usage?.output || 0;
-        this.emit('ai-usage', { ...this.usage });
-        return { ...reply, provider: id, model: this.usage.model };
+        usage.inputTokens += reply.usage?.input || 0;
+        usage.outputTokens += reply.usage?.output || 0;
+        this.emit('ai-usage', this.usageSnapshot());
+        return { ...reply, provider: id, model };
       } catch (caught) {
         signal?.throwIfAborted();
         // DOMException.code is read-only. Normalize a wrapper rather than

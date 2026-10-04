@@ -1,5 +1,16 @@
 # Verification
 
+## October 4 — main brain and local monitoring routing (0.6.3)
+
+Installed 0.6.3 fixes two independent causes of the misleading Ollama display. Passive screen observations now use separate local counters and cannot overwrite foreground task provider/model status. The connection panel labels the configured MAIN BRAIN, shows local monitoring separately, and identifies an actual local task or fallback rather than hiding it. Concurrent background inference cannot change the model returned with a foreground response.
+
+Opening a saved Library workspace no longer forces unrelated questions into local mode. With cloud file sharing disabled, its topic, titles and contents are withheld from cloud context. Actual private workspace/file tool results still trigger the existing local privacy route; that protection survives context pruning.
+
+- Real installed check opened the saved nine-object GPU workspace with cloudFiles false, then asked “What is 2 plus 2? Reply with only the answer.” NVIDIA returned “2 + 2 = 4”, using `nvidia/nemotron-3.5-lightning-30b-a3b`, with HTTP 200 and zero provider fallbacks. The two inference responses consumed two budget requests, ending at 240 / 300. The actual rendered panel showed MAIN BRAIN / NVIDIA.
+- 262 JavaScript tests passed, including separate local background usage, concurrent foreground/background model identity, withheld saved-workspace metadata and retained private-tool routing. TypeScript, ESLint and the production build passed. Existing bundle-size advice remains informational. Passive monitoring was not exercised live because the owner's restored vision preference was manual; its local route and status isolation passed regression tests.
+- Installed product version 0.6.3.0; installed and packaged archives matched SHA-256 `18AA2F8A2596344919913917A1EFFE889DEA6F2EDD76C72D887BAAB31C17182F`. Packaging verified metadata and all 92 application files. Credential scan found no exposed keys. NVIDIA/AUTO, free-only mode, encrypted credentials, request caps, voice/microphone preferences and privacy settings were preserved.
+- This was a targeted routing check. The full GPU/research/Blender acceptance was last exercised on 0.6.2 as recorded below; it was not rerun or relabelled as a new 0.6.3 acceptance pass. Genuine provider failures and budget exhaustion still fall back and remain visible.
+
 ## October 4 — acceptance and responsive text repair (0.6.2)
 
 **Exact installed acceptance: COMPLETE PASS for this run.** All nine graph nodes SUCCEEDED in **164,460 ms**, with **zero provider fallback warnings and zero provider HTTP errors**. This is one observed successful acceptance run, not a guarantee of future hosted-service availability or arbitrary design quality. Earlier development failures were preserved and were not called passes.

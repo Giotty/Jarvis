@@ -183,6 +183,13 @@ export type Plugin = {
   }[];
 };
 export type AIUsage = {
+  background?: {
+    requests: number;
+    provider: ProviderID;
+    model: string;
+    processing: 'CLOUD' | 'LOCAL';
+  };
+  routeReason?: string;
   nvidiaBudget?: { day: string; used: number; cap: number; limited: boolean; resetAt: number };
   geminiBudget?: {
     day: string;

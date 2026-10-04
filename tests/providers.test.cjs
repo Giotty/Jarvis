@@ -360,6 +360,56 @@ test('cloud screen settings and manual mode keep background images local', async
   await router.chat(image, [], true, undefined, undefined, { manualVision: true });
   assert.equal(calls.at(-1).id, 'openai');
 });
+
+test('Passive screen monitoring stays local and cannot overwrite task provider, model or counters', async () => {
+  const { providers, calls } = routerProviders(),
+    events = [];
+  const router = new ProviderRouter({
+    config: () => ({ ...config(), cloudScreen: true, cloudVision: 'when-needed' }),
+    providers,
+    emit: (type, data) => events.push({ type, data }),
+  });
+  await router.chat(messages);
+  const foreground = { ...router.usage };
+  const reply = await router.chat(
+    [...messages, { role: 'user', content: 'Monitor', images: ['fixture'] }],
+    [],
+    true,
+    undefined,
+    undefined,
+    { background: true, manualVision: true },
+  );
+  assert.equal(calls.at(-1).id, 'ollama');
+  assert.equal(reply.model, 'local-vision');
+  assert.deepEqual(router.usage, foreground);
+  assert.equal(router.usageSnapshot().background.requests, 1);
+  assert.equal(router.usageSnapshot().background.cloudRequests, 0);
+  assert.equal(events.at(-1).data.provider, 'openai');
+  assert.equal(events.at(-1).data.background.provider, 'ollama');
+  await router.chat([...messages, { role: 'tool', content: 'private-file', _privacy: 'files' }]);
+  assert.equal(router.usage.provider, 'ollama');
+  assert.equal(router.usage.routeReason, 'private-content');
+});
+
+test('Concurrent monitoring does not change the model returned by a foreground request', async () => {
+  const { providers } = routerProviders();
+  let finish;
+  providers.openai.chat = async () =>
+    new Promise((resolve) => {
+      finish = () => resolve({ role: 'assistant', content: 'Cloud reply' });
+    });
+  const router = new ProviderRouter({ config, providers });
+  const foreground = router.chat(messages);
+  for (let i = 0; i < 100 && !finish; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(typeof finish, 'function', 'The foreground provider was not reached');
+  await router.chat(messages, [], false, undefined, undefined, { background: true });
+  finish();
+  const reply = await foreground;
+  assert.equal(reply.provider, 'openai');
+  assert.equal(reply.model, 'custom-chat');
+  assert.equal(router.usage.provider, 'openai');
+  assert.equal(router.usage.model, 'custom-chat');
+});
 test('capability overrides route non-vision models through local captioning', async () => {
   const { providers, calls } = routerProviders();
   providers.openai.capabilities = async () => ['TEXT', 'TOOLS'];

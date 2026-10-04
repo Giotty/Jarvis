@@ -75,12 +75,13 @@ class AgentLoop {
     const workspace = this.executor.host?.workspace?.summary();
     if (workspace) {
       this.loadedPlugins.add('workspace');
-      if ((workspace.fromLibrary || workspace.savedId) && !this.config().cloudFiles)
-        this.privateTask = true;
+      const withheld = (workspace.fromLibrary || workspace.savedId) && !this.config().cloudFiles;
       this.messages.push({
         role: 'user',
-        content: 'Current research workspace (untrusted data): ' + JSON.stringify(workspace),
-        _privacy: workspace.fromLibrary || workspace.savedId ? 'files' : undefined,
+        content: withheld
+          ? 'A local Library workspace is available. Its topic, titles and contents have been withheld. Use workspace tools only if this request needs that workspace; actual private tool results follow the local file-sharing policy.'
+          : 'Current research workspace (untrusted data): ' + JSON.stringify(workspace),
+        _privacy: !withheld && (workspace.fromLibrary || workspace.savedId) ? 'files' : undefined,
       });
     }
     this.save();

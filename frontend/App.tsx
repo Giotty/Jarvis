@@ -723,24 +723,24 @@ export function App() {
       : state === 'IDLE' && voice.listening
         ? 'LISTENING'
         : state;
-  const selectedProvider = aiUsage?.requests
-    ? aiUsage.provider
-    : config?.cloudEnabled
+  const selectedProvider =
+    config?.cloudEnabled && !['local-only', 'privacy'].includes(config.routerMode)
       ? config.provider
       : 'ollama';
-  const selectedModel = aiUsage?.requests
-    ? aiUsage.model
-    : selectedProvider === 'nvidia'
-      ? config?.nvidiaModel
-      : selectedProvider === 'nim'
-        ? config?.nimModel
-        : selectedProvider === 'gemini'
-          ? config?.geminiModel
-          : selectedProvider === 'openai'
-            ? config?.openaiModel
-            : selectedProvider === 'anthropic'
-              ? config?.anthropicModel
-              : config?.model;
+  const selectedModel =
+    aiUsage?.requests && aiUsage.provider === selectedProvider
+      ? aiUsage.model
+      : selectedProvider === 'nvidia'
+        ? config?.nvidiaModel
+        : selectedProvider === 'nim'
+          ? config?.nimModel
+          : selectedProvider === 'gemini'
+            ? config?.geminiModel
+            : selectedProvider === 'openai'
+              ? config?.openaiModel
+              : selectedProvider === 'anthropic'
+                ? config?.anthropicModel
+                : config?.model;
   const budget = aiUsage?.geminiBudget;
   const currentStep = active?.steps.at(-1);
   const displayMessage = messages.filter((m) => m.role === 'USER' || m.role === 'JARVIS').slice(-2);
@@ -886,9 +886,9 @@ export function App() {
             <span>INTELLIGENCE LINK</span>
             <b>02 / AGENT</b>
           </div>
-          <Panel title="AI CONNECTION" code={aiUsage?.processing || 'LOCAL'}>
+          <Panel title="AI CONNECTION" code={selectedProvider === 'ollama' ? 'LOCAL' : 'CLOUD'}>
             <div className="provider-readout">
-              <small>ACTIVE PROVIDER</small>
+              <small>MAIN BRAIN</small>
               <b>{selectedProvider.toUpperCase()}</b>
               <span>{selectedModel || 'UNCONFIGURED'}</span>
             </div>
@@ -956,12 +956,20 @@ export function App() {
               </div>
             )}
             <small className="processing-state">
-              {['nvidia', 'gemini'].includes(selectedProvider)
-                ? 'FREE HOSTED'
-                : selectedProvider === 'ollama' && config?.cloudEnabled
-                  ? 'OFFLINE FALLBACK'
-                  : 'LOCAL'}
+              {aiUsage?.requests && aiUsage.provider !== selectedProvider
+                ? 'LAST TASK · ' +
+                  aiUsage.provider.toUpperCase() +
+                  ' · ' +
+                  (aiUsage.routeReason === 'fallback' ? 'FALLBACK' : 'LOCAL PRIVACY / POLICY')
+                : ['nvidia', 'gemini'].includes(selectedProvider)
+                  ? 'FREE HOSTED'
+                  : selectedProvider === 'ollama' && config?.cloudEnabled
+                    ? 'OFFLINE FALLBACK'
+                    : 'LOCAL'}
             </small>
+            {!!aiUsage?.background?.requests && (
+              <small className="processing-state">SCREEN MONITORING · LOCAL</small>
+            )}
             <p className="link-state">
               {config?.cloudEnabled
                 ? 'CLOUD ROUTING AVAILABLE'
