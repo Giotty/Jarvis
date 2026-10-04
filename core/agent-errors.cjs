@@ -1,4 +1,16 @@
 function publicError(error) {
+  const artifacts = {
+    DESIGN_PLAN_INVALID:
+      'The AI returned an invalid 3D plan; the target does not need clarification.',
+    ARTIFACT_MISSING: 'A required generated file or workspace reference is missing.',
+    DESIGN_QUALITY_REJECTED:
+      'The real model was created, but its visual quality did not pass review.',
+    VISUAL_REVIEW_UNAVAILABLE:
+      'The model files are available, but visual AI review could not complete.',
+    PREVIEW_LOAD_FAILED:
+      'The real GLB is available, but the interactive viewer did not confirm loading.',
+  };
+  if (artifacts[error?.code]) return artifacts[error.code];
   const categories = {
     AUTH_ERROR: 'The AI credential was rejected. Check the saved key in Settings.',
     MODEL_NOT_FOUND: 'The selected AI model is unavailable at its configured endpoint.',

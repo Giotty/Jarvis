@@ -436,7 +436,7 @@ export const WorkspaceView = memo(function WorkspaceView({
                 </span>
               </div>
               <div className="module-content">
-                {compact ? (
+                {compact && !m.panels[page].body ? (
                   <div className="context-preview">
                     {image && role !== 'STACKED' ? (
                       <AttributedImage id={image.id} title={image.title} />

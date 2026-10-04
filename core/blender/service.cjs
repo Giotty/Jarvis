@@ -110,7 +110,7 @@ class BlenderService {
     this.queue = job;
     return job;
   }
-  async perform(args, signal) {
+  async perform(args, signal, rebuild = false) {
     signal?.throwIfAborted();
     if (!this.config().blenderEnabled || !this.config().filesystem)
       throw Error('Blender or file access is disabled.');
@@ -136,7 +136,7 @@ class BlenderService {
       units: previous?.units || args.units,
       operations: args.operations,
       output,
-      input: previous ? this.file(id, path.join(previous.folder, 'scene.blend')) : null,
+      input: previous && !rebuild ? this.file(id, path.join(previous.folder, 'scene.blend')) : null,
     };
     const jobPath = this.file(id, revisionName + '.json');
     fs.writeFileSync(jobPath, JSON.stringify(job));
@@ -366,6 +366,7 @@ class BlenderService {
         mock: true,
         message: '3D design simulated; no AI request or scene mutation was made.',
       };
+    if (!args.projectId) return require('./illustration.cjs').design(this, args, signal);
     const previous = args.projectId ? this.manifest(args.projectId) : null;
     const { scenePlan, toBatch } = require('./scene-plan.cjs');
     const contract = zodToJsonSchema(previous ? batch : scenePlan);
@@ -686,6 +687,7 @@ class BlenderService {
         properties: {
           goal: { type: 'string', minLength: 1, maxLength: 2000 },
           projectId: { type: 'string', format: 'uuid' },
+          artifactSession: { type: 'string', format: 'uuid' },
         },
         required: ['goal'],
         additionalProperties: false,

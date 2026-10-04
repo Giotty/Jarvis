@@ -26,6 +26,7 @@ const planSchema = z
               'images',
               'presentation',
               'design',
+              'review',
               'preview',
               'save',
               'action',
@@ -57,8 +58,63 @@ function ordered(nodes) {
   }
   return result;
 }
+const planningSchema = planSchema.extend({
+  nodes: z
+    .array(
+      planSchema.shape.nodes.element.extend({
+        kind: z.enum([
+          'inspect',
+          'research',
+          'images',
+          'presentation',
+          'design',
+          'preview',
+          'save',
+          'action',
+        ]),
+      }),
+    )
+    .min(1)
+    .max(18),
+});
 function validatePlan(plan) {
   const p = planSchema.parse(plan);
+  for (const model of p.nodes.filter((n) => n.kind === 'design')) {
+    let review = p.nodes.find((n) => n.kind === 'review' && n.dependsOn.includes(model.id));
+    if (!review) {
+      review = {
+        id: 'review-' + crypto.randomUUID(),
+        kind: 'review',
+        goal: 'Verify rendered visual quality and recognizability of the generated design.',
+        dependsOn: [model.id],
+      };
+      p.nodes.splice(p.nodes.indexOf(model) + 1, 0, review);
+    }
+    let modelPreview = p.nodes.find(
+      (n) =>
+        n.kind === 'preview' &&
+        (p.nodes.filter((n) => n.kind === 'design').length === 1 ||
+          n.dependsOn.includes(model.id) ||
+          n.dependsOn.includes(review.id) ||
+          !n.dependsOn.length),
+    );
+    if (!modelPreview && p.requirements?.model3d) {
+      modelPreview = {
+        id: 'preview-' + crypto.randomUUID(),
+        kind: 'preview',
+        goal: 'Verify that the validated exported GLB loads in the interactive workspace viewer.',
+        dependsOn: [model.id],
+      };
+      p.nodes.splice(p.nodes.indexOf(review) + 1, 0, modelPreview);
+    }
+    if (modelPreview) modelPreview.dependsOn = [model.id];
+    // Preview consumes created artifacts, independently of the quality verdict.
+    for (const preview of p.nodes.filter(
+      (n) =>
+        n.kind === 'preview' && (n.dependsOn.includes(model.id) || n.dependsOn.includes(review.id)),
+    ))
+      preview.dependsOn = [model.id];
+  }
   p.nodes = ordered(p.nodes);
   const design = p.nodes.find((n) => n.kind === 'design');
   if (design) {
@@ -220,6 +276,9 @@ class TaskGraph {
     const options = {
       forceTool: { type: 'function', function: { name: 'submit_task_result' } },
       outputTokens,
+      // Structured background planning can queue longer than conversational chat.
+      // Keep it bounded without changing the latency budget for ordinary replies.
+      requestTimeout: 90000,
       localOnly: this.agent.taskProfile?.privacy === 'local',
       profile,
     };
@@ -268,7 +327,7 @@ class TaskGraph {
         contractInstruction:
           'Always include requirements: whether images, chart, comparison, model3d and render were requested, and the exact requested folder name (or null). Do not omit requirements.',
       },
-      planSchema.required({ requirements: true }),
+      planningSchema.required({ requirements: true }),
       2300,
     );
     return validatePlan(p);
@@ -662,6 +721,7 @@ class TaskGraph {
     const chartCandidates = require('./chart-candidates.cjs').candidates(
       evidence,
       this.context.researchPlan?.entities,
+      this.agent.request,
     );
     const factCandidates = require('./chart-candidates.cjs').facts(
       evidence,
@@ -794,9 +854,13 @@ class TaskGraph {
       throw Error(
         'Not enough observed specifications or source excerpts for a supported presentation.',
       );
+    const preferred = chartCandidates.find((candidate) => candidate.id === draft.chartId);
     const selected =
-      chartCandidates.find((candidate) => candidate.id === draft.chartId) ||
-      (this.requirements?.chart ? chartCandidates[0] : undefined);
+      preferred && preferred.relevance >= chartCandidates[0].relevance
+        ? preferred
+        : this.requirements?.chart
+          ? chartCandidates[0]
+          : preferred;
     if (this.requirements?.chart && !selected)
       throw Error('No source-verified comparison chart was selected.');
     draft.chart = selected
@@ -834,54 +898,139 @@ class TaskGraph {
       chart: input.scenes.flatMap((s) => s.panels).find((p) => p.type === 'bar'),
       comparison: this.context.researchPlan?.entities,
       chartCrossChecked: selected?.crossChecked,
+      chartSelection: selected
+        ? {
+            metric: selected.title,
+            reason: selected.relevanceReason,
+            relevance: selected.relevance,
+          }
+        : null,
       sourceExcerptCount: draft.cards.reduce((n, card) => n + card.quoteIds.length, 0),
     };
   }
   async design(node) {
-    const result = await this.tool(
-      'blender_design',
-      {
-        goal:
-          node.goal +
-          '\nVerified public subject context: ' +
-          JSON.stringify({ subject: this.context.hardware?.identity }) +
-          '\nCreate a simple stylized object, not manufacturing geometry. Include real PNG render, saved blend project, GLB export, visual review and interactive preview.',
-      },
-      node,
-    );
-    const formats = new Set(result.exports?.map((e) => e.format));
-    if (
-      !formats.has('PNG') ||
-      !formats.has('GLB') ||
-      !result.quality?.reviewed ||
-      !result.quality.accepted
-    )
-      throw Error(
-        '3D output or visual inspection is incomplete. The verified files remain available.',
+    const artifactSession = crypto.randomUUID();
+    let result;
+    try {
+      result = await this.tool(
+        'blender_design',
+        {
+          artifactSession,
+          goal:
+            node.goal +
+            '\nVerified public subject context: ' +
+            JSON.stringify({ subject: this.context.hardware?.identity }) +
+            '\nCreate a simple stylized object, not manufacturing geometry. Include real PNG render, saved blend project, GLB export, visual review and interactive preview.',
+        },
+        node,
       );
-    if (this.host.modelPreviewStatus) {
-      const asset = result.exports.find((e) => e.format === 'GLB');
-      const deadline = Date.now() + 15000;
-      while (Date.now() < deadline && !this.host.modelPreviewStatus(asset.assetId)) {
-        this.agent.controller.signal.throwIfAborted();
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
-      if (!this.host.modelPreviewStatus(asset.assetId)?.loaded)
-        throw Error('The real GLB was exported, but interactive preview loading did not verify.');
+    } catch (error) {
+      this.agent.controller.signal.throwIfAborted();
+      result = this.host.modelArtifacts?.(artifactSession);
+      if (!result) throw error;
+      result = {
+        ...result,
+        quality: {
+          ...result.quality,
+          accepted: false,
+          failureCode: error.code,
+          findings: [
+            ...(result.quality?.findings || []),
+            'The design service could not finish visual review; the validated artifacts remain available.',
+          ],
+        },
+      };
+      this.host.emit?.('task-recovery', {
+        stage: 'design-artifact-handoff',
+        artifactSession,
+        projectId: result.projectId,
+        reason: require('../providers/diagnostics.cjs').safeError(error.message),
+      });
     }
+    const formats = new Set(result.exports?.map((e) => e.format));
+    if (!result.verified || !formats.has('PNG') || !formats.has('GLB'))
+      throw Object.assign(Error('The required real Blender artifacts were not produced.'), {
+        code: 'ARTIFACT_MISSING',
+      });
+    const fs = require('node:fs');
+    for (const file of [result.blendPath, ...result.exports.map((e) => e.path)])
+      if (!file || !fs.existsSync(file) || fs.statSync(file).size < 20)
+        throw Object.assign(Error('A generated artifact is missing or empty.'), {
+          code: 'ARTIFACT_MISSING',
+        });
+    const glb = result.exports.find((e) => e.format === 'GLB'),
+      render = result.exports.find((e) => e.format === 'PNG');
+    if (fs.readFileSync(result.blendPath).subarray(0, 7).toString('ascii') !== 'BLENDER')
+      throw Object.assign(Error('The saved project has an invalid Blender header.'), {
+        code: 'ARTIFACT_MISSING',
+      });
+    require('../blender/service.cjs').validateGlb(fs.readFileSync(glb.path));
+    if (fs.readFileSync(render.path).subarray(0, 8).toString('hex') !== '89504e470d0a1a0a')
+      throw Object.assign(Error('The Blender render is not a valid PNG.'), {
+        code: 'ARTIFACT_MISSING',
+      });
+    const module = this.host.workspace.current?.modules.find((m) =>
+      m.panels.some((p) => p.assetId === glb.assetId),
+    );
+    if (!module)
+      throw Object.assign(Error('The generated GLB has no workspace object.'), {
+        code: 'ARTIFACT_MISSING',
+      });
     return {
       projectId: result.projectId,
-      assetId: result.exports.find((e) => e.format === 'GLB').assetId,
-      previewLoaded: true,
+      artifactSession,
+      assetId: glb.assetId,
+      artifacts: {
+        blendPath: result.blendPath,
+        glbPath: glb.path,
+        renderPath: render.path,
+        assetId: glb.assetId,
+        workspaceObjectId: module.id,
+        revision: result.revision,
+      },
       quality: result.quality,
       formats: [...formats],
     };
   }
-  async preview() {
-    const created = Object.values(this.outputs).find((r) => r.projectId && r.assetId);
-    if (!created || !this.host.modelPreviewStatus?.(created.assetId)?.loaded)
-      throw Error('No interactive model has loaded.');
-    return { projectId: created.projectId, assetId: created.assetId, loaded: true };
+  modelInput(node) {
+    const created = node.dependsOn.map((id) => this.outputs[id]).find((r) => r?.artifacts);
+    if (!created)
+      throw Object.assign(Error('This stage has no validated design artifact bundle.'), {
+        code: 'ARTIFACT_MISSING',
+      });
+    return created;
+  }
+  async review(node) {
+    const created = this.modelInput(node);
+    if (!created.quality?.reviewed || !created.quality.accepted)
+      throw Object.assign(
+        Error((created.quality?.findings || ['Visual inspection remains incomplete.']).join(' ')),
+        {
+          code:
+            created.quality?.failureCode || !created.quality?.reviewed
+              ? 'VISUAL_REVIEW_UNAVAILABLE'
+              : 'DESIGN_QUALITY_REJECTED',
+        },
+      );
+    return { artifacts: created.artifacts, quality: created.quality, accepted: true };
+  }
+  async preview(node) {
+    const created = this.modelInput(node);
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline && !this.host.modelPreviewStatus?.(created.assetId)?.loaded) {
+      this.agent.controller.signal.throwIfAborted();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (!this.host.modelPreviewStatus?.(created.assetId)?.loaded)
+      throw Object.assign(Error('The validated GLB did not load in the interactive viewer.'), {
+        code: 'PREVIEW_LOAD_FAILED',
+      });
+    return {
+      projectId: created.projectId,
+      assetId: created.assetId,
+      artifacts: created.artifacts,
+      loaded: true,
+    };
   }
   async save(node) {
     let folder;
@@ -911,8 +1060,22 @@ class TaskGraph {
     const actual = this.host.workspace.library.read(saved.entry.id);
     if (actual.folderId !== (folder?.id || null) || !actual.workspace.modules.length)
       throw Error('Saved Library item did not verify.');
+    const models = actual.workspace.modules
+      .flatMap((m) => m.panels)
+      .filter((p) => p.type === 'model3d');
+    const artifactBundles = Object.values(this.outputs)
+      .filter((r) => r.artifacts && models.some((p) => p.assetId === r.assetId))
+      .filter((r, index, all) => all.findIndex((other) => other.assetId === r.assetId) === index)
+      .map((r) => ({ ...r.artifacts, libraryObjectId: saved.entry.id }));
+    for (const bundle of artifactBundles)
+      for (const file of [bundle.blendPath, bundle.glbPath, bundle.renderPath])
+        if (!require('node:fs').existsSync(file))
+          throw Object.assign(Error('Saved model asset no longer exists.'), {
+            code: 'ARTIFACT_MISSING',
+          });
     return {
       id: saved.entry.id,
+      artifactBundles,
       folder: folder?.name,
       modules: actual.workspace.modules.length,
       models: actual.workspace.modules.flatMap((m) => m.panels).filter((p) => p.type === 'model3d')

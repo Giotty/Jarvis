@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { Briefing, BriefingPanel, WorkspaceFocus, unwrap } from './types';
+import { MeasuredText } from './MeasuredText';
 const ModelPreview = lazy(() =>
   import('./ModelPreview').then((m) => ({ default: m.ModelPreview })),
 );
@@ -151,14 +152,12 @@ export function ResearchPanel({
     if (highlight?.item !== undefined || highlight?.datum !== undefined || highlight?.imageId)
       setTextView(false);
   }, [highlight?.item, highlight?.datum, highlight?.imageId]);
-  const [bodyPage, setBodyPage] = useState(0),
-    [itemPage, setItemPage] = useState(0);
+  const [itemPage, setItemPage] = useState(0);
   const itemSize = panel.type === 'timeline' || compact ? 1 : 2;
   useEffect(() => {
     if (highlight?.item !== undefined) setItemPage(Math.floor(highlight.item / itemSize));
   }, [highlight?.item, itemSize]);
   const itemCount = Math.ceil((panel.items?.length || 0) / itemSize);
-  const bodyParts = panel.body?.match(compact ? /[\s\S]{1,120}/g : /[\s\S]{1,240}/g) || [];
   const sources = briefing.sources.filter((s) => panel.sourceIds.includes(s.id));
   const value = panel.data?.[0]?.value;
   return (
@@ -166,6 +165,7 @@ export function ResearchPanel({
       ref={root}
       className={
         'briefing-panel' +
+        (!rich || textView ? ' text-focused-panel' : '') +
         (compact ? ' compact-panel' : '') +
         ' panel-' +
         panel.type +
@@ -187,28 +187,7 @@ export function ResearchPanel({
         </button>
       )}
       {panel.body && (!compact || !rich || textView) && (
-        <p className="briefing-body">{bodyParts[Math.min(bodyPage, bodyParts.length - 1)]}</p>
-      )}
-      {bodyParts.length > 1 && (!compact || !rich || textView) && (
-        <div className="panel-pagination">
-          <button
-            disabled={!bodyPage}
-            aria-label="Previous text segment"
-            onClick={() => setBodyPage((p) => p - 1)}
-          >
-            ←
-          </button>
-          <span>
-            TEXT {bodyPage + 1}/{bodyParts.length}
-          </span>
-          <button
-            disabled={bodyPage === bodyParts.length - 1}
-            aria-label="Next text segment"
-            onClick={() => setBodyPage((p) => p + 1)}
-          >
-            →
-          </button>
-        </div>
+        <MeasuredText key={panel.title} text={panel.body} />
       )}
       {(!compact || !textView) && (
         <>

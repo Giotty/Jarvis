@@ -12,7 +12,49 @@ function same(label, entity) {
     ? a.family === b.family && a.number === b.number && a.rank === b.rank
     : normalized(label) === normalized(entity) || normalized(entity).endsWith(normalized(label));
 }
-function candidates(evidence, entities = []) {
+function metricRelevance(metric, goal = '') {
+  if (/gaming.*power|power.*gaming/i.test(metric))
+    return {
+      relevance: 60,
+      relevanceReason: 'Measures workload power consumption, not gaming frame rate.',
+    };
+  const categories = [
+    [
+      /fps|frame.?rate|gaming|benchmark|render.*time|throughput|latency/i,
+      100,
+      'Directly measures workload performance.',
+    ],
+    [
+      /cuda.*cores|stream.*processors|^(?:cores|threads)$/i,
+      85,
+      'Compares a main compute specification; this is not a gaming benchmark.',
+    ],
+    [
+      /memory bandwidth|bandwidth/i,
+      80,
+      'Compares data throughput relevant to demanding workloads.',
+    ],
+    [/vram|standard memory|memory (?:size|capacity)/i, 75, 'Compares usable memory capacity.'],
+    [/boost.*clock/i, 70, 'Compares the published peak clock specification.'],
+    [
+      /total graphics power|board power|tgp|tdp/i,
+      60,
+      'Compares load power and cooling requirements.',
+    ],
+  ];
+  if (/playback|idle|standby/i.test(metric) && !/playback|idle|standby/i.test(goal))
+    return {
+      relevance: 5,
+      relevanceReason:
+        'Secondary efficiency metric, less useful for a general performance overview.',
+    };
+  const selected = categories.find(([pattern]) => pattern.test(metric));
+  return {
+    relevance: selected?.[1] || 30,
+    relevanceReason: selected?.[2] || 'Comparable values observed in the same source table.',
+  };
+}
+function candidates(evidence, entities = [], goal = '') {
   const results = [];
   if (entities.length < 2) return results;
   for (const source of evidence)
@@ -38,6 +80,7 @@ function candidates(evidence, entities = []) {
           results.push({
             id: source.id + ':' + tableIndex + ':' + axis + ':' + metricIndex,
             title: metric,
+            ...metricRelevance(metric, goal),
             unit: units[0] || metric,
             sourceId: source.id,
             data: selected.map((label, i) => ({
@@ -67,7 +110,9 @@ function candidates(evidence, entities = []) {
     ];
     candidate.crossChecked = candidate.corroboratingSources.length > 0;
   }
-  return results.sort((a, b) => Number(b.crossChecked) - Number(a.crossChecked)).slice(0, 30);
+  return results
+    .sort((a, b) => b.relevance - a.relevance || Number(b.crossChecked) - Number(a.crossChecked))
+    .slice(0, 30);
 }
 function facts(evidence, entities = []) {
   const out = [];
@@ -162,4 +207,4 @@ function quotes(evidence, entities = []) {
     .slice(0, 60)
     .map((quote, index) => ({ ...quote, id: 'q' + (index + 1) }));
 }
-module.exports = { candidates, facts, quotes, same };
+module.exports = { candidates, facts, quotes, same, metricRelevance };

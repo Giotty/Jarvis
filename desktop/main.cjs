@@ -53,6 +53,7 @@ const withTarget = targetWindow(
 );
 const inFlight = new Set();
 const modelPreviews = new Map();
+const modelArtifacts = new Map();
 function track(operation) {
   const pending = operation();
   inFlight.add(pending);
@@ -106,6 +107,14 @@ if (smokeArg) {
   app.setPath('userData', testDir);
 }
 const emit = (type, data) => {
+  if (
+    type === 'blender-artifacts-ready' &&
+    z.string().uuid().safeParse(data?.sessionId).success &&
+    data.result?.verified
+  ) {
+    modelArtifacts.set(data.sessionId, data.result);
+    while (modelArtifacts.size > 24) modelArtifacts.delete(modelArtifacts.keys().next().value);
+  }
   if (type === 'state') state = data;
   if (type === 'google-grounding') latestGrounding = data;
   if (type === 'confirmation' && data && win) win.show();
@@ -814,6 +823,7 @@ async function init() {
       research,
       workspace,
       modelPreviewStatus: (id) => modelPreviews.get(id),
+      modelArtifacts: (sessionId) => modelArtifacts.get(sessionId),
       verifyApplication,
       screenState: () => screenContext.snapshot(),
       visibleWindows: async () => (await nativeCall('list_windows')).windows,

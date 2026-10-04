@@ -2349,6 +2349,49 @@ small,
 .panel-pagination button {
   padding: 0 7px;
 }
+.measured-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 30%;
+  min-height: 0;
+  min-width: 0;
+  gap: 4px;
+}
+.text-focused-panel .measured-text {
+  flex: 1 1 0;
+}
+.text-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.module-content .briefing-body.text-page,
+.module-content .briefing-body.text-measure,
+.briefing-body.text-page,
+.briefing-body.text-measure {
+  display: block;
+  -webkit-line-clamp: unset;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  height: auto;
+}
+.text-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  width: 100%;
+  top: 0;
+  left: 0;
+}
+.text-pagination {
+  flex-shrink: 0;
+}
+.briefing-panel > header,
+.briefing-panel > footer {
+  flex-shrink: 0;
+}
 .confirmation-ring {
   border-radius: 50%;
   min-height: 510px;
@@ -3192,6 +3235,10 @@ small,
   text-overflow: ellipsis;
 }
 .file-compact .file-role {
+  display: none;
+}
+.file-compact .briefing-panel > header,
+.file-compact .briefing-panel > footer {
   display: none;
 }
 .file-compact .module-index {

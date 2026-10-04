@@ -71,18 +71,35 @@ function normalize(data) {
     usage: { input: data.usage?.prompt_tokens || 0, output: data.usage?.completion_tokens || 0 },
   };
 }
-function compactContract(schema, depth = 0) {
-  if (schema.anyOf || schema.oneOf || schema.$ref)
-    return { type: 'object', additionalProperties: true };
+function compactContract(schema, depth = 0, root = schema) {
+  if (schema.$ref?.startsWith('#/') && depth < 12) {
+    const target = schema.$ref
+      .slice(2)
+      .split('/')
+      .reduce((value, key) => value?.[key.replaceAll('~1', '/').replaceAll('~0', '~')], root);
+    if (target) return compactContract(target, depth + 1, root);
+  }
+  const union = schema.anyOf || schema.oneOf;
+  if (union?.length === 2 && union.some((s) => s.type === 'null'))
+    return { anyOf: union.map((s) => compactContract(s, depth + 1, root)) };
+  if (union || schema.$ref) return { type: 'object', additionalProperties: true };
   if (schema.type === 'array')
-    return { type: 'array', items: compactContract(schema.items || {}, depth + 1) };
+    return {
+      type: 'array',
+      items: compactContract(schema.items || {}, depth + 1, root),
+      ...(schema.minItems !== undefined ? { minItems: schema.minItems } : {}),
+      ...(schema.maxItems !== undefined ? { maxItems: schema.maxItems } : {}),
+    };
   if (schema.type === 'object' || schema.properties)
-    if (depth > 3) return { type: 'object', additionalProperties: true };
+    if (depth > 7) return { type: 'object', additionalProperties: true };
   if (schema.type === 'object' || schema.properties)
     return {
       type: 'object',
       properties: Object.fromEntries(
-        Object.entries(schema.properties || {}).map(([k, v]) => [k, compactContract(v, depth + 1)]),
+        Object.entries(schema.properties || {}).map(([k, v]) => [
+          k,
+          compactContract(v, depth + 1, root),
+        ]),
       ),
       ...(schema.required ? { required: schema.required } : {}),
       additionalProperties: schema.additionalProperties !== false,
@@ -242,8 +259,9 @@ class NvidiaProvider extends AIProvider {
     const contract = options.schema && JSON.stringify(options.schema);
     const promptSchema = options.promptSchema || this.profiles[model]?.schemaMode === 'prompt';
     const complexTools = tools?.some((t) => JSON.stringify(t.function.parameters).length > 5000);
-    const compactTools =
-      complexTools && (options.compactTools || this.profiles[model]?.toolSchemaMode === 'compact');
+    // Large unions can fail NIM grammar compilation with HTTP 500. Send the
+    // compact grammar up front; the complete host contract still validates calls.
+    const compactTools = complexTools || options.compactTools;
     const adaptedTools = compactTools
       ? tools.map((t) => ({
           ...t,
@@ -322,7 +340,13 @@ class NvidiaProvider extends AIProvider {
       await (this.budget.reserve ? this.budget.reserve(signal) : this.budget.take(signal));
     let response;
     try {
-      response = await this.request(this.base() + '/chat/completions', body, headers, signal);
+      response = await this.request(
+        this.base() + '/chat/completions',
+        body,
+        headers,
+        signal,
+        options,
+      );
     } catch (error) {
       if (complexTools && !compactTools && error.code === 'http_500') {
         trace(this, 'adapter-recovery', {
@@ -376,7 +400,31 @@ class NvidiaProvider extends AIProvider {
       throw error;
     }
     if (!stream) {
-      const reply = normalize(await json(response));
+      let reply;
+      try {
+        reply = normalize(await json(response));
+      } catch (error) {
+        if (
+          vision &&
+          options.schema &&
+          error.code === 'empty_response' &&
+          !options.transportRecovery
+        ) {
+          trace(this, 'adapter-recovery', {
+            model,
+            code: error.code,
+            from: 'empty-constrained-nonstream',
+            to: 'streamed-prompt-json',
+          });
+          return this.chat(messages, tools, vision, signal, onDelta, {
+            ...options,
+            stream: true,
+            promptSchema: true,
+            transportRecovery: true,
+          });
+        }
+        throw error;
+      }
       if (onDelta && reply.content) onDelta(reply.content);
       return reply;
     }

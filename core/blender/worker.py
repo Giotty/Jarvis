@@ -23,8 +23,8 @@ scene.unit_settings.system = 'METRIC'
 scene.unit_settings.scale_length = {'meters':1, 'centimeters':0.01, 'millimeters':0.001}[job['units']]
 scene.render.engine = 'CYCLES'
 scene.cycles.device = 'CPU'
-scene.cycles.samples = 16
-scene.cycles.use_denoising = False
+scene.cycles.samples = 24
+scene.cycles.use_denoising = True
 scene.render.threads_mode = 'FIXED'
 scene.render.threads = 2
 exports = []
@@ -43,10 +43,14 @@ def transform(o,a):
     if 'scale' in a: o.scale = a['scale']
     if 'dimensions' in a:
         if min(a['dimensions']) <= 0: raise ValueError('Dimensions must be positive')
+        # The tool contract specifies LOCAL dimensions before rotation.
+        rotation = o.rotation_euler.copy()
+        o.rotation_euler = (0, 0, 0)
         bpy.context.view_layer.update()
         o.dimensions = a['dimensions']
         active(o)
         bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        o.rotation_euler = rotation
 def modifier(o,a):
     kinds={'bevel':'BEVEL','solidify':'SOLIDIFY','subdivision':'SUBSURF','mirror':'MIRROR'}
     if len(o.modifiers)>=8: raise ValueError('Modifier limit reached')

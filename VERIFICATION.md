@@ -1,5 +1,5 @@
 # JARVIS verification
 
-Installed release: **0.6.1**. The exact source workflow succeeded; the latest installed acceptance remains **INCOMPLETE** because hosted/local model requests genuinely timed out. See the October 4 report for actual successes, failures, preserved safety settings and persistence evidence.
+Installed release: **0.6.2**. The final exact installed GPU/research/workspace/Blender acceptance request completed all nine stages with **zero AI connection errors or fallback warnings**. Its nine saved objects and actual GLB were verified after restart. Responsive text pagination and dragging passed installed UI checks. This is an observed acceptance pass, not a guarantee of universal provider availability or arbitrary model quality.
 
-The current release's test evidence, actual acceptance results and known limitations are maintained in [docs/VERIFICATION.md](docs/VERIFICATION.md). Model capability observations, compatibility sources and 3D limitations are in [docs/NVIDIA-3D.md](docs/NVIDIA-3D.md). Historical results are labelled by release and are not additional current passes.
+The current fourteen-point report, artifact paths, diagnostic reconstruction, test evidence and limitations are in [docs/VERIFICATION.md](docs/VERIFICATION.md). Historical release results below it are explicitly labelled and are not additional current passes.

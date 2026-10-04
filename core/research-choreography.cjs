@@ -53,7 +53,7 @@ function arrange(workspace, focusId, related = [], locks = new Map()) {
           (z) => !occupied.some((l) => overlaps(z, l)),
         ) || zones.PRIMARY_RIGHT;
   let slot = 0;
-  const contextZones = [
+  let contextZones = [
     zones.TOP_LEFT,
     zones.BOTTOM_LEFT,
     zones.TOP_RIGHT,
@@ -62,6 +62,20 @@ function arrange(workspace, focusId, related = [], locks = new Map()) {
     zones.STACK_RIGHT,
     zones.PARKING_EDGE,
   ];
+  if (
+    workspace.responseMode === 'FULL_WORKSPACE' &&
+    workspace.modules.filter((m) => m.state !== 'closed').length >= 7
+  ) {
+    // Dense research has enough objects to collide in the peripheral stacks.
+    // Reserve the dominant primary column and tile the remaining cards with gaps.
+    const startX = focusZone.x > 0.5 ? 0.01 : 0.35;
+    contextZones = Array.from({ length: 9 }, (_, i) => ({
+      x: startX + (i % 3) * 0.213,
+      y: 0.01 + Math.floor(i / 3) * 0.33,
+      width: 0.202,
+      height: 0.31,
+    }));
+  }
   for (const m of workspace.modules) {
     if (m.state === 'closed') continue;
     const desiredRole =
@@ -88,14 +102,14 @@ function arrange(workspace, focusId, related = [], locks = new Map()) {
     const available = contextZones.filter(
       (z) => !overlaps(z, focusZone) && !occupied.some((l) => overlaps(z, l)),
     );
-    const zone = available[slot % Math.max(1, available.length)] || zones.PARKING_EDGE;
-    const layer = Math.floor(slot / Math.max(1, available.length));
+    const zone = available[0] || zones.PARKING_EDGE;
+    const layer = available.length ? 0 : 1;
     m.layout = {
       ...zone,
       x: Math.min(1 - zone.width, zone.x + layer * 0.014),
       y: Math.min(1 - zone.height, zone.y + layer * 0.065),
     };
-    if (desiredRole === 'SECONDARY' && !layer) {
+    if (desiredRole === 'SECONDARY' && !layer && workspace.modules.length < 7) {
       const medium = {
         ...m.layout,
         width: Math.min(0.25, m.layout.width + 0.04),
@@ -108,6 +122,7 @@ function arrange(workspace, focusId, related = [], locks = new Map()) {
     }
     m.zIndex = 25 - slot;
     if (layer || m.groupCollapsed) m.visualRole = 'STACKED';
+    occupied.push(m.layout);
     slot++;
   }
   for (const m of fixed) m.zIndex = Math.max(m.zIndex || 35, m.id === focusId ? 50 : 35);

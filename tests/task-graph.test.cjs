@@ -112,10 +112,18 @@ test('Graph recovery continues independent creation and saving after research/im
     },
     () => {},
   );
-  assert.deepEqual(executed, ['inspect', 'research', 'images', 'presentation', 'design', 'save']);
+  assert.deepEqual(executed, [
+    'inspect',
+    'research',
+    'images',
+    'presentation',
+    'design',
+    'review',
+    'save',
+  ]);
   assert.deepEqual(
     plan.nodes.map((n) => n.state),
-    ['SUCCEEDED', 'FAILED', 'FAILED', 'SUCCEEDED', 'SUCCEEDED', 'SUCCEEDED'],
+    ['SUCCEEDED', 'FAILED', 'FAILED', 'SUCCEEDED', 'SUCCEEDED', 'SUCCEEDED', 'SUCCEEDED'],
   );
 });
 test('A redundant Blender render is part of design and cannot duplicate generic actions', () => {
@@ -128,9 +136,9 @@ test('A redundant Blender render is part of design and cannot duplicate generic 
   });
   assert.deepEqual(
     plan.nodes.map((n) => n.kind),
-    ['design', 'preview'],
+    ['design', 'review', 'preview'],
   );
-  assert.deepEqual(plan.nodes[1].dependsOn, ['design']);
+  assert.deepEqual(plan.nodes[2].dependsOn, ['design']);
   assert.match(plan.nodes[0].goal, /Render the Blender scene/);
 });
 test('Graph rejects cycles/missing predecessors and blocks genuine unavailable identity', async () => {
@@ -397,7 +405,7 @@ test('Adjacent hierarchy uses observed official models, rejects newer generation
   assert.equal(adjacentGpu('RTX 5080', sources), null);
   assert.equal(adjacentGpu('RTX 5070 Laptop GPU', sources), null);
 });
-test('Large tool grammar recovery changes transport schema without removing host constraints', async () => {
+test('Large tool grammars are compact before the first request and retain host constraints', async () => {
   const bodies = [],
     model = 'nvidia/nemotron-3.5-lightning-30b-a3b';
   const provider = new NvidiaProvider({
@@ -406,7 +414,7 @@ test('Large tool grammar recovery changes transport schema without removing host
     fetcher: async (_url, r) => {
       const body = JSON.parse(r.body);
       bodies.push(body);
-      if (bodies.length === 1)
+      if (body.tools[0].function.parameters.properties.objects.items.anyOf)
         return new Response('{"error":"Internal server error"}', { status: 500 });
       return new Response(
         JSON.stringify({
@@ -448,10 +456,9 @@ test('Large tool grammar recovery changes transport schema without removing host
     },
   ];
   await provider.chat([{ role: 'user', content: 'Make a scene' }], tools, false);
-  assert.equal(bodies.length, 2);
-  assert.equal(bodies[0].model, bodies[1].model);
-  assert.ok(!bodies[1].tools[0].function.parameters.properties.objects.items.anyOf);
-  assert.match(bodies[1].messages[0].content, /complete contracts/);
+  assert.equal(bodies.length, 1);
+  assert.ok(!bodies[0].tools[0].function.parameters.properties.objects.items.anyOf);
+  assert.match(bodies[0].messages[0].content, /complete contracts/);
   const { compactContract } = require('../core/providers/nvidia.cjs');
   assert.equal(compactContract({ type: 'number' }, 10).type, 'number');
 });

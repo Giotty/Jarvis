@@ -116,7 +116,7 @@ const batch = z
     projectId: z.string().uuid().optional(),
     title: z.string().min(1).max(90).default('3D project'),
     units: z.enum(['meters', 'millimeters', 'centimeters']).default('meters'),
-    operations: z.array(operation).min(1).max(60),
+    operations: z.array(operation).min(1).max(180),
   })
   .strict();
 module.exports = { operations, operation, batch };

@@ -42,11 +42,16 @@ class AIProvider {
   cancel(controller) {
     controller.abort();
   }
-  async request(url, body, headers, signal) {
+  async request(url, body, headers, signal, options = {}) {
     const diagnostic = requestTrace(this, url, body);
     trace(this, 'http-request', diagnostic);
     signal?.throwIfAborted();
-    const timeout = AbortSignal.timeout(this.config().providerTimeout || 45000);
+    const timeout = AbortSignal.timeout(
+      Math.max(
+        1,
+        Math.min(120000, options.requestTimeout || this.config().providerTimeout || 45000),
+      ),
+    );
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response;
     try {
@@ -73,7 +78,12 @@ class AIProvider {
       trace(this, 'http-error', {
         ...diagnostic,
         status: response.status,
-        error: safeError(detail.error?.message || detail.detail || detail.message),
+        error: safeError(
+          detail.error?.message ||
+            (typeof detail.error === 'string' ? detail.error : '') ||
+            detail.detail ||
+            detail.message,
+        ),
         errorType: safeError(detail.error?.type),
         errorCode: safeError(detail.error?.code),
       });
@@ -90,7 +100,12 @@ class AIProvider {
       error.diagnostic = {
         ...diagnostic,
         status: response.status,
-        error: safeError(detail.error?.message || detail.detail || detail.message),
+        error: safeError(
+          detail.error?.message ||
+            (typeof detail.error === 'string' ? detail.error : '') ||
+            detail.detail ||
+            detail.message,
+        ),
       };
       throw error;
     }
