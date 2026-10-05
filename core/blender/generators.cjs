@@ -1,6 +1,5 @@
-// Optional future mesh generators return validated operations, never Python.
-// Blender remains the mandatory construction, rendering and export backend.
-const { batch } = require('./schema.cjs');
+// Optional generators return a validated self-contained GLB, never scripts.
+// Blender is the primary modeler and the mandatory refinement/export backend.
 class Generative3DProviders {
   constructor() {
     this.providers = new Map();
@@ -24,15 +23,20 @@ class Generative3DProviders {
       id,
       enabled: entry.enabled,
       modalities: entry.provider.modalities,
+      capabilities: entry.provider.capabilities,
+      status: entry.provider.status?.(),
     }));
   }
   async generate(id, request, signal) {
     const entry = this.providers.get(id);
     if (!entry?.enabled) throw Error('3D generator disabled');
     signal?.throwIfAborted();
-    const operations = await entry.provider.generate(request, signal);
+    const artifact = await entry.provider.generate(request, signal);
     signal?.throwIfAborted();
-    return batch.parse(operations);
+    if (artifact.format !== 'GLB' || !Buffer.isBuffer(artifact.buffer))
+      throw Error('Generator must return a real GLB buffer.');
+    require('./service.cjs').validateGlb(artifact.buffer);
+    return artifact;
   }
 }
 module.exports = { Generative3DProviders };

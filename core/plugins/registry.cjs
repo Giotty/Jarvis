@@ -117,7 +117,7 @@ class PluginRegistry {
         timeout:
           p.id === 'blender'
             ? t.name === 'blender_design'
-              ? Math.min(300000, this.config().agentTaskTimeout || 180000)
+              ? 1800000
               : this.config().blenderTimeout || 90000
             : this.config().toolTimeout || 30000,
         readOnly: t.risk === 0,
@@ -223,9 +223,9 @@ class PluginRegistry {
     const timeout = AbortSignal.timeout(
       this.find(action.tool).plugin.id === 'blender'
         ? Math.min(
-            300000,
+            action.tool === 'blender_design' ? 1800000 : 300000,
             action.tool === 'blender_design'
-              ? this.config().agentTaskTimeout || 180000
+              ? 1800000
               : this.config().blenderTimeout || 90000,
           )
         : this.config().toolTimeout || 30000,

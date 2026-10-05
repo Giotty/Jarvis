@@ -2,7 +2,7 @@ const cheerio = require('cheerio');
 const { randomUUID } = require('node:crypto');
 
 // Remove conversational/search filler, not entities. Accents and plurals should
-// not make a French team name look unrelated to an English result.
+// keep arbitrary multilingual names relevant.
 const filler = new Set(
   'a an the on in at of for to and or with from by is are was be it its my me you your please hey jarvis give tell all info information got about how what who which can could would should latest current news update updates movie movies film films video videos first second three players people biographies biography details search find website official images image'.split(
     ' ',
@@ -34,21 +34,14 @@ function relevance(item, query) {
   if (wanted.length >= 2 && matched < 2) return 0;
   return matched / wanted.length;
 }
+// Preserve precise identifiers for arbitrary entities, including quoted names.
 function productIdentifiers(query) {
-  return [
-    ...String(query).matchAll(/\b(?:rtx|gtx|rx|ryzen|core\s+i[3579]|i[3579])[-\s]*(\d{3,5})/gi),
-  ].map((m) => m[1]);
+  return [...new Set(String(query).match(/\b[a-z]*\d{3,}[a-z]*\b/gi) || [])].map((s) =>
+    s.toLowerCase(),
+  );
 }
 function authority(item) {
-  return /(^|\.)(nvidia\.com|intel\.com|amd\.com|microsoft\.com|apple\.com)$/.test(
-    new URL(item.url).hostname,
-  )
-    ? 1
-    : /(^|\.)(techpowerup\.com|tomshardware\.com|anandtech\.com|gamersnexus\.net|rtings\.com|pcmag\.com|notebookcheck\.net|techspot\.com)$/.test(
-          new URL(item.url).hostname,
-        )
-      ? 0.5
-      : 0;
+  return item.sourceType === 'primary' || item.official === true ? 1 : 0;
 }
 function cleanUrl(raw, base) {
   try {
@@ -196,8 +189,6 @@ async function searchPublic(get, query, signal, alternatives = []) {
     }),
   );
   const timeSensitive = /\b(latest|current|today|recent|news|updates?)\b/i.test(query);
-  const productEvidence =
-    productIdentifiers(query).length > 0 && /spec|review|performance|benchmark|site:/i.test(query);
   const restricted = [...query.matchAll(/\bsite:([a-z0-9.-]+)/gi)].map((m) => m[1].toLowerCase());
   const ranked = batches
     .flat()
@@ -210,29 +201,11 @@ async function searchPublic(get, query, signal, alternatives = []) {
           (h) => new URL(r.url).hostname === h || new URL(r.url).hostname.endsWith('.' + h),
         ),
     )
-    .filter(
-      (r) =>
-        !productEvidence ||
-        (!/\b(?:leak|rumou?r|alleged|reportedly|deal|save|discount|price in india)\b/i.test(
-          r.title,
-        ) &&
-          !/(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|bestbuy\.[a-z.]+|newegg\.[a-z.]+|walmart\.[a-z.]+)$/.test(
-            new URL(r.url).hostname,
-          ) &&
-          (authority(r) > 0 ||
-            (productIdentifiers(query).every((id) =>
-              terms(r.title + ' ' + new URL(r.url).pathname).includes(id),
-            ) &&
-              /spec|review|benchmark/i.test(r.title)))),
-    )
     .sort(
       (a, b) =>
         b.relevance +
-        (productEvidence ? authority(b) : 0) +
         (timeSensitive && b.searchProvider === 'bing-news' ? 0.1 : 0) -
-        (a.relevance +
-          (productEvidence ? authority(a) : 0) +
-          (timeSensitive && a.searchProvider === 'bing-news' ? 0.1 : 0)),
+        (a.relevance + (timeSensitive && a.searchProvider === 'bing-news' ? 0.1 : 0)),
     );
   return {
     results: diverse(ranked),

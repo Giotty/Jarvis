@@ -103,6 +103,7 @@ export function App() {
     ]),
     [input, setInput] = useState(''),
     [busy, setBusy] = useState(false),
+    [heavyWork, setHeavyWork] = useState(false),
     [setup, setSetup] = useState(false),
     [history, setHistory] = useState<string[]>([]),
     [historyIndex, setHistoryIndex] = useState(-1),
@@ -621,6 +622,9 @@ export function App() {
         case 'progress':
           report(e.data as string);
           break;
+        case 'resource-state':
+          setHeavyWork((e.data as { busy: boolean }).busy);
+          break;
         case 'commentary':
           report(e.data as string, 'JARVIS');
           if (!commandBusy.current && !player.current?.speaking && voiceRef.current.level < 0.03)
@@ -753,7 +757,7 @@ export function App() {
     <div
       className={
         'app hud-root animations-' +
-        (config?.animations || 'full') +
+        (heavyWork ? 'reduced' : config?.animations || 'full') +
         ' intensity-' +
         (config?.animationIntensity || 'normal') +
         (settingsOpen ? ' settings-open' : '') +
@@ -934,25 +938,9 @@ export function App() {
               </span>
             </div>
             {aiUsage?.nvidiaBudget && config?.provider === 'nvidia' && (
-              <div
-                className={
-                  'gemini-budget' +
-                  (aiUsage.nvidiaBudget.used >= aiUsage.nvidiaBudget.cap * 0.8
-                    ? ' budget-warning'
-                    : '')
-                }
-              >
-                <b>
-                  NVIDIA · {aiUsage.nvidiaBudget.used} / {aiUsage.nvidiaBudget.cap} today
-                </b>
-                <progress max={aiUsage.nvidiaBudget.cap} value={aiUsage.nvidiaBudget.used} />
-                <small>
-                  {aiUsage.nvidiaBudget.limited
-                    ? 'LOCAL / FREE PROVIDER FALLBACK'
-                    : aiUsage.nvidiaBudget.used >= aiUsage.nvidiaBudget.cap * 0.8
-                      ? '80% SAFETY BUDGET WARNING'
-                      : 'JARVIS safety budget · service limits may differ'}
-                </small>
+              <div className="gemini-budget">
+                <b>NVIDIA requests today: {aiUsage.nvidiaBudget.used}</b>
+                <small>DIAGNOSTICS · NO LOCAL DAILY CAP</small>
               </div>
             )}
             <small className="processing-state">

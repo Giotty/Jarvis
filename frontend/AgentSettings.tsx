@@ -316,7 +316,6 @@ export function ProviderSettings({
               'agentTaskTimeout',
               'cloudRequestLimit',
               'geminiDailyCap',
-              'nvidiaDailyCap',
             ] as (keyof Config)[]
           ).map((key) => (
             <label className="setting-row" key={key}>
@@ -329,9 +328,8 @@ export function ProviderSettings({
                       toolTimeout: 'Tool timeout / ms',
                       providerTimeout: 'AI timeout / ms',
                       agentTaskTimeout: 'Task timeout / ms',
-                      cloudRequestLimit: 'Cloud session request limit (0 = off)',
+                      cloudRequestLimit: 'Other providers: session cap (NVIDIA excluded; 0 = off)',
                       geminiDailyCap: 'JARVIS Gemini requests / day',
-                      nvidiaDailyCap: 'JARVIS NVIDIA requests / day',
                     } as Record<string, string>
                   )[key]
                 }
@@ -347,9 +345,9 @@ export function ProviderSettings({
             </label>
           ))}
           <p className="help">
-            Daily caps are JARVIS safety budgets, not providers' actual quotas. Warning at 80%;
-            compatible free/local fallback at the cap. Reset at local midnight. Attempts count,
-            including research, vision and model checks.
+            Gemini has a configurable daily safety budget. NVIDIA counts are diagnostic only; no
+            daily or session counter stops NVIDIA inference. Fallback follows actual service errors,
+            model availability and capability requirements.
           </p>
         </>
       )}

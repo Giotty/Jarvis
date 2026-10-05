@@ -34,6 +34,10 @@ export type Config = {
   embeddingProvider: 'ollama' | 'nim';
   blenderPath: string;
   blenderEnabled: boolean;
+  blenderQuality: 'AUTO' | 'QUICK' | 'STANDARD' | 'HIGH' | 'ULTRA';
+  trellisEnabled: boolean;
+  trellisUrl: string;
+  trellisVariant: 'base:text' | 'large:text' | 'large:image' | 'large:text+large:image';
   blenderIterations: number;
   blenderTimeout: number;
   preview3dFps: number;
@@ -228,6 +232,7 @@ export type BriefingPanel = {
   narration?: string;
   type:
     | 'text'
+    | 'entity'
     | 'model3d'
     | 'metrics'
     | 'line'

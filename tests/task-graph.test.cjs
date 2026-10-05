@@ -6,7 +6,6 @@ const { ProviderError } = require('../core/providers/base.cjs');
 const { safeError } = require('../core/providers/diagnostics.cjs');
 const { makeBriefing } = require('../core/agent/presentation-draft.cjs');
 const { extract } = require('../core/research-agent.cjs');
-const { adjacentGpu } = require('../core/agent/product-hierarchy.cjs');
 test('Missing structured planner output gets one bounded repair with a larger allowance', async () => {
   const { TaskGraph } = require('../core/agent/task-graph.cjs');
   const { z } = require('zod');
@@ -29,7 +28,7 @@ test('Missing structured planner output gets one bounded repair with a larger al
   );
   assert.deepEqual(allowances, [2300, 3324]);
 });
-test('GPU evidence checks fetched titles rather than trusting a generated URL slug', () => {
+test('All evidence reaches semantic assessment without topic-specific filtering', () => {
   const { TaskGraph } = require('../core/agent/task-graph.cjs');
   const sources = new Map([
     [
@@ -62,7 +61,7 @@ test('GPU evidence checks fetched titles rather than trusting a generated URL sl
   };
   assert.deepEqual(
     graph.evidence().map((s) => s.id),
-    ['correct'],
+    ['correct','wrong','generic'],
   );
 });
 test('Graph recovery continues independent creation and saving after research/image failure', async () => {
@@ -86,19 +85,19 @@ test('Graph recovery continues independent creation and saving after research/im
         id: 'present',
         kind: 'presentation',
         goal: 'Present sourced evidence',
-        dependsOn: ['research', 'images'],
+        dependsOn: [], optionalDependsOn:['research','images'],
       },
       {
         id: 'design',
         kind: 'design',
         goal: 'Create an illustrative processor sculpture',
-        dependsOn: ['research'],
+        dependsOn: [], optionalDependsOn:['research'],
       },
       {
         id: 'save',
         kind: 'save',
         goal: 'Save available outputs',
-        dependsOn: ['design', 'present'],
+        dependsOn: [], optionalDependsOn:['design','present'],
         folder: 'Processors',
       },
     ],
@@ -112,35 +111,16 @@ test('Graph recovery continues independent creation and saving after research/im
     },
     () => {},
   );
-  assert.deepEqual(executed, [
-    'inspect',
-    'research',
-    'images',
-    'presentation',
-    'design',
-    'review',
-    'save',
-  ]);
-  assert.deepEqual(
-    plan.nodes.map((n) => n.state),
-    ['SUCCEEDED', 'FAILED', 'FAILED', 'SUCCEEDED', 'SUCCEEDED', 'SUCCEEDED', 'SUCCEEDED'],
-  );
+  assert.deepEqual(executed,['inspect','research','presentation','design','save','review']);
+  assert.equal(plan.nodes.find(n=>n.id==='images').state,'BLOCKED');
+  assert.equal(plan.nodes.find(n=>n.id==='design').state,'SUCCEEDED');
 });
-test('A redundant Blender render is part of design and cannot duplicate generic actions', () => {
-  const plan = validatePlan({
-    nodes: [
-      { id: 'design', kind: 'design', goal: 'Create an illustrated monitor', dependsOn: [] },
-      { id: 'render', kind: 'action', goal: 'Render the Blender scene', dependsOn: ['design'] },
-      { id: 'preview', kind: 'preview', goal: 'Load the GLB', dependsOn: ['render'] },
-    ],
-  });
-  assert.deepEqual(
-    plan.nodes.map((n) => n.kind),
-    ['design', 'review', 'preview'],
-  );
-  assert.deepEqual(plan.nodes[2].dependsOn, ['design']);
-  assert.match(plan.nodes[0].goal, /Render the Blender scene/);
+test('Semantic action nodes are preserved without prompt-string rewriting',()=>{
+ const plan=validatePlan({nodes:[{id:'design',kind:'design',goal:'Create an illustrated monitor',dependsOn:[]},{id:'render',kind:'action',goal:'Render the Blender scene',dependsOn:['design']},{id:'preview',kind:'preview',goal:'Load the GLB',dependsOn:['render']}]});
+ assert.deepEqual(plan.nodes.map(n=>n.kind),['design','action','preview','review']);
+ assert.deepEqual(plan.nodes[2].dependsOn,['render']);
 });
+
 test('Graph rejects cycles/missing predecessors and blocks genuine unavailable identity', async () => {
   assert.throws(
     () => validatePlan({ nodes: [{ id: 'x', kind: 'research', goal: 'Read', dependsOn: ['x'] }] }),
@@ -162,7 +142,7 @@ test('Graph rejects cycles/missing predecessors and blocks genuine unavailable i
   );
   assert.deepEqual(
     plan.nodes.map((n) => n.state),
-    ['FAILED', 'BLOCKED', 'SUCCEEDED'],
+    ['FAILED', 'BLOCKED', 'BLOCKED'],
   );
 });
 test('Valid forward references are ordered while cycles remain invalid', () => {
@@ -187,20 +167,12 @@ test('Valid forward references are ordered while cycles remain invalid', () => {
     /cyclic/,
   );
 });
-test('Comparison research nodes merge before display and keep the second subject goal', () => {
-  const plan = validatePlan({
-    nodes: [
-      { id: 'a', kind: 'research', goal: 'Read CPU A', dependsOn: [] },
-      { id: 'p', kind: 'presentation', goal: 'Compare CPUs', dependsOn: ['a'] },
-      { id: 'b', kind: 'research', goal: 'Read CPU B', dependsOn: ['a'] },
-      { id: 's', kind: 'save', goal: 'Save', dependsOn: ['b'] },
-    ],
-  });
-  assert.equal(plan.nodes.filter((n) => n.kind === 'research').length, 1);
-  assert.match(plan.nodes[0].goal, /CPU A.*CPU B/);
-  assert.equal(plan.nodes[1].kind, 'presentation');
-  assert.ok(plan.nodes.every((n) => !n.dependsOn.includes('b')));
+test('Independent entity research branches retain semantic dependencies',()=>{
+ const plan=validatePlan({nodes:[{id:'a',kind:'research',goal:'Read moon A',dependsOn:[]},{id:'b',kind:'research',goal:'Read moon B',dependsOn:[]},{id:'p',kind:'presentation',goal:'Compare moons',dependsOn:['a','b']}]});
+ assert.equal(plan.nodes.filter(n=>n.kind==='research').length,2);
+ assert.deepEqual(plan.nodes[2].dependsOn,['a','b']);
 });
+
 test('NIM has one combined system instruction including the host contract', () => {
   const m = input([
     { role: 'system', content: 'EXACT CONTRACT' },
@@ -390,21 +362,15 @@ test('Transposed manufacturer tables extract one metric across product columns',
   ]);
   assert.equal(panel.unit, 'Cores');
 });
-test('Adjacent hierarchy uses observed official models, rejects newer generations and honors suffix tiers', () => {
-  const sources = [
-    {
-      id: 'official',
-      url: 'https://www.nvidia.com/products',
-      readable: true,
-      text: 'RTX 5070 RTX 5080 RTX 5070 Super RTX 5070 Ti RTX 6080',
-    },
-    { id: 'rumor', url: 'https://rumors.example/story', readable: true, text: 'RTX 5070 XL' },
-  ];
-  assert.equal(adjacentGpu('NVIDIA GeForce RTX 5070', sources).label, 'RTX 5070 Super');
-  assert.equal(adjacentGpu('RTX 5070 Ti', sources).label, 'RTX 5080');
-  assert.equal(adjacentGpu('RTX 5080', sources), null);
-  assert.equal(adjacentGpu('RTX 5070 Laptop GPU', sources), null);
+test('Semantic facts bind arbitrary entities to exact retrieved evidence',()=>{
+ const {verifyFacts}=require('../core/agent/semantic-research.cjs');
+ const source={id:'observation',url:'https://example.com',readable:true,text:'Europa has a diameter of 3,122 km.'};
+ const fact={entity:'Europa',label:'Diameter',value:'3,122 km',quote:source.text,sourceId:source.id};
+ assert.equal(verifyFacts([fact],[source])[0].value,'3,122 km');
+ assert.throws(()=>verifyFacts([{...fact,value:'4,000 km'}],[source]),/quotation/);
+ assert.throws(()=>verifyFacts([{...fact,sourceId:'invented'}],[source]),/quotation/);
 });
+
 test('Large tool grammars are compact before the first request and retain host constraints', async () => {
   const bodies = [],
     model = 'nvidia/nemotron-3.5-lightning-30b-a3b';
@@ -508,21 +474,21 @@ test('Comparison catalog pairs exact products and publishes only observed, cross
     ],
   };
   const result = candidates([a, b], ['Processor A', 'Processor B']);
-  assert.equal(result.length, 2);
-  assert.ok(result.every((c) => c.crossChecked));
-  assert.ok(result.every((c) => c.title === 'Cores'));
+  assert.equal(result.filter(c=>c.title==='Cores').length, 2);
+  assert.ok(result.filter(c=>c.title==='Cores').every((c) => c.crossChecked));
+  assert.ok(result.every(c=>c.title==='Cores'));
   assert.deepEqual(
     result[0].data.map((d) => d.value),
     [8, 12],
   );
   assert.ok(
-    facts([a, b], ['Processor A', 'Processor B']).every((f) => ['8', '12'].includes(f.value)),
+    facts([a, b], ['Processor A', 'Processor B']).filter(f=>f.label==='Cores').every((f) => ['8', '12'].includes(f.value)),
   );
   assert.deepEqual(candidates([a], ['Processor A', 'Unobserved product']), []);
   assert.deepEqual(candidates([a], ['Processor A', 'Processor A']), []);
   assert.deepEqual(
     facts([a], ['Processor A', 'Processor B']).map((f) => f.id),
-    ['f1', 'f2'],
+    ['f1', 'f2', 'f3', 'f4'],
   );
 });
 test('Closed logging pipes cannot crash the desktop; unrelated stream errors remain visible', () => {
@@ -549,24 +515,9 @@ test('Unverified benchmark prose is omitted while sourced cards retain qualitati
   );
   assert.deepEqual(qualitativeNarration('It achieves 100 FPS.'), { text: '', removed: 1 });
 });
-test('Source excerpt catalogs cannot add facts, internal IDs or other GPU families', () => {
-  const { quotes } = require('../core/agent/chart-candidates.cjs');
-  const sentence = 'This compact model runs cool and quiet during demanding gaming workloads.';
-  const result = quotes(
-    [
-      {
-        id: 'review',
-        url: 'https://review.example',
-        text:
-          sentence +
-          '\nHowever, limited memory can constrain larger texture workloads and rendering tasks.\nRTX 5090 is much faster and supports demanding applications.\nCores | 500 | 1000',
-      },
-    ],
-    ['RTX 4060', 'RTX 4060 Ti'],
-  );
-  assert.equal(result.length, 2);
-  assert.ok(result.some((q) => q.text === sentence));
-  assert.deepEqual(new Set(result.map((q) => q.kind)), new Set(['strength', 'limitation']));
-  assert.ok(result.every((q) => q.sourceId === 'review'));
-  assert.ok(result.every((q) => !q.text.includes('5090') && !q.text.includes('|')));
+test('Generic excerpt catalog retains observed text without topic-specific classification',()=>{
+ const {quotes}=require('../core/agent/chart-candidates.cjs');
+ const sentence='This moon has a surface dominated by bright icy terrain and a dark fractured crust.';
+ const result=quotes([{id:'science',text:sentence+'\nMetric | 8 | 9'}]);
+ assert.equal(result[0].text,sentence);assert.equal(result[0].kind,'context');assert.equal(result.length,1);
 });

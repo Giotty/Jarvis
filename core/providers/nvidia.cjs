@@ -281,7 +281,9 @@ class NvidiaProvider extends AIProvider {
               ? [
                   {
                     role: 'system',
-                    content: 'Return only a JSON object satisfying this contract: ' + contract,
+                    content:
+                      'Return only a JSON object containing actual result VALUES satisfying this contract. Never return the JSON schema, properties/type definitions, or a wrapper around the result: ' +
+                      contract,
                   },
                   ...messages,
                 ]

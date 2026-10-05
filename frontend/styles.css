@@ -3052,6 +3052,11 @@ small,
 .hud-hidden *:after {
   animation-play-state: paused !important;
 }
+.hud-hidden .memory-wall .floating-file {
+  animation: none !important;
+  opacity: 1;
+  clip-path: none;
+}
 .panel-summary-toggle {
   align-self: flex-start;
   flex-shrink: 0;

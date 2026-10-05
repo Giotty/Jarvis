@@ -25,8 +25,8 @@ const draftSchema = z
           })
           .strict(),
       )
-      .min(2)
-      .max(4),
+      .min(1)
+      .max(8),
     chart: z
       .object({
         title: z.string().max(90),
@@ -73,8 +73,8 @@ const selectionDraftSchema = draftSchema
           })
           .strict(),
       )
-      .min(2)
-      .max(4),
+      .min(1)
+      .max(8),
   })
   .strict();
 const normalized = (text) =>
@@ -167,8 +167,7 @@ function makeBriefing(draft, evidence, imageIds = [], requirements = {}) {
     }
     scenes.push({
       title: draft.chart.title,
-      narration:
-        'This chart compares the same published metric for each subject. It is not a frame-rate benchmark.',
+      narration: 'This chart compares the same sourced measure for each subject.',
       panels: [
         {
           type: 'bar',
@@ -188,11 +187,11 @@ function makeBriefing(draft, evidence, imageIds = [], requirements = {}) {
   if (images.length)
     scenes.push({
       title: 'Subject imagery',
-      narration: 'These images come from the cited public product and review pages.',
+      narration: 'These images come from the cited public sources.',
       panels: [
         {
           type: 'images',
-          title: 'Attributed product images',
+          title: 'Attributed reference images',
           sourceIds: [...new Set(images.map((i) => i.source.id))],
           imageIds: images.map((i) => i.image.id),
         },
@@ -201,8 +200,7 @@ function makeBriefing(draft, evidence, imageIds = [], requirements = {}) {
   else if (requirements.images) throw Error('No relevant image bytes have been verified.');
   scenes.push({
     title: 'Research sources',
-    narration:
-      'I used the official product information and independent reviews linked on these source cards.',
+    narration: 'These source cards link to the evidence used in this workspace.',
     panels: [
       {
         type: 'sources',

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Config, Memory, Task, Audit, VisionResult, Stats, unwrap } from './types';
-import { Pager, PluginManager, ProviderSettings } from './AgentSettings';
+import { Pager, PluginManager, ProviderSettings, Credentials } from './AgentSettings';
 export const categories = [
   'AI',
   'VOICE',
@@ -26,9 +26,25 @@ const fields: Record<string, Field[]> = {
   '3D': [
     { key: 'blenderEnabled', label: 'Blender tools' },
     { key: 'blenderPath', label: 'Blender executable (auto-detected)' },
+    {
+      key: 'blenderQuality',
+      label: 'Design quality',
+      options: ['AUTO', 'QUICK', 'STANDARD', 'HIGH', 'ULTRA'],
+    },
     { key: 'blenderIterations', label: 'Maximum design revisions', min: 1, max: 5 },
     { key: 'blenderTimeout', label: 'Blender operation timeout / ms', min: 5000, max: 300000 },
     { key: 'preview3dFps', label: '3D preview frame limit', min: 1, max: 60 },
+    {
+      key: 'trellisEnabled',
+      label: 'Optional TRELLIS endpoint',
+      hint: 'Leave off on this PC: local TRELLIS requires at least 12 GB VRAM and 32 GB RAM. No automatic installation.',
+    },
+    { key: 'trellisUrl', label: 'Future local or trusted HTTPS endpoint' },
+    {
+      key: 'trellisVariant',
+      label: 'Endpoint variant',
+      options: ['base:text', 'large:text', 'large:image', 'large:text+large:image'],
+    },
   ],
   VOICE: [
     { key: 'microphone', label: 'Microphone access' },
@@ -160,6 +176,16 @@ export function ControlDeck({
       ) : (
         <div className="control-content">
           <span className="eyebrow">{category} / CONFIGURATION</span>
+          {category === '3D' && page === 2 && (
+            <>
+              <p className="help">
+                Blender is primary. Optional credentials are encrypted locally. The NGC key is for
+                future container setup; it is never sent to an inference endpoint.
+              </p>
+              <Credentials name="nvidia_ngc" />
+              <Credentials name="trellis" />
+            </>
+          )}
           <div className="field-group">
             {list.slice(page * 4, page * 4 + 4).map((f) => (
               <label className="setting-row" key={f.key}>

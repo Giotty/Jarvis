@@ -185,6 +185,7 @@ class ResearchWorkspace {
       w.modules.push({
         id: crypto.randomUUID(),
         objectKey: scene.key || crypto.randomUUID(),
+        relation: scene.relation || 'CONTEXT',
         groupId: scene.groupId || null,
         groupTitle: scene.groupTitle || '',
         visualRole: 'STACKED',
@@ -814,7 +815,14 @@ const sourceSchema = z
       .max(4000)
       .refine((u) => {
         const p = new URL(u);
-        return (['http:', 'https:'].includes(p.protocol) || p.protocol==='jarvis-artifact:' && id.safeParse(p.hostname).success && !p.pathname) && !p.username && !p.password;
+        return (
+          (['http:', 'https:'].includes(p.protocol) ||
+            (p.protocol === 'jarvis-artifact:' &&
+              id.safeParse(p.hostname).success &&
+              !p.pathname)) &&
+          !p.username &&
+          !p.password
+        );
       }),
     publishedAt: z.string().nullable().optional(),
     fetchedAt: z.number().finite().nullable().optional(),
@@ -924,6 +932,16 @@ class ResearchLibrary {
           .string()
           .max(100)
           .parse(m.objectKey || m.id),
+        relation: z
+          .enum([
+            'CURRENT_ENTITY',
+            'RELATED_ENTITY',
+            'SUPPORTING_VISUAL',
+            'COMPARISON',
+            'SOURCE',
+            'CONTEXT',
+          ])
+          .parse(m.relation || 'CONTEXT'),
         groupId: m.groupId ? z.string().max(100).parse(m.groupId) : null,
         groupTitle: z
           .string()

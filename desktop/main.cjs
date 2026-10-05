@@ -749,6 +749,10 @@ async function init() {
     emit,
   });
   const discoveredGames = [];
+  const resources = new (require('../core/resource-scheduler.cjs').ResourceScheduler)({
+    emit,
+    pauseBackground: () => screenContext?.invalidateAnalysis(),
+  });
   screenContext = new ScreenContext({
     isAssistant: (window) => window.pid === process.pid,
     probe: () => nativeCall('get_foreground_window'),
@@ -758,7 +762,11 @@ async function init() {
     emit,
     busy: () =>
       Boolean(
-        agent?.busy || agent?.active?.status === 'waiting' || speech?.pending || speaker?.pending,
+        resources.active ||
+        agent?.busy ||
+        agent?.active?.status === 'waiting' ||
+        speech?.pending ||
+        speaker?.pending,
       ),
     stats: () => lastStats,
     games: () => discoveredGames,
@@ -963,6 +971,9 @@ async function init() {
   });
   blender = new BlenderService({
     directory: path.join(dir, '3D'),
+    research,
+    secrets,
+    resources,
     config: () => config,
     emit,
     workspace,

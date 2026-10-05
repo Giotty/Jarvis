@@ -38,7 +38,8 @@ const schema = z
       .array(z.string().max(200))
       .max(8)
       .default(['z-ai/glm-5.3-flash', 'meta/muse-glimmer-30b']),
-    nvidiaDailyCap: z.number().int().min(1).max(10000).default(100),
+    // Legacy persisted setting; NVIDIA counters never control routing.
+    nvidiaDailyCap: z.number().int().min(0).max(10000).default(0),
     nvidiaFreeEndpoint: z.boolean().default(true),
     nimEnabled: z.boolean().default(false),
     nimOcrEnabled: z.boolean().default(false),
@@ -74,6 +75,25 @@ const schema = z
     embeddingProvider: z.enum(['ollama', 'nim']).default('ollama'),
     blenderPath: z.string().max(1000).default(''),
     blenderEnabled: z.boolean().default(true),
+    blenderQuality: z.enum(['AUTO', 'QUICK', 'STANDARD', 'HIGH', 'ULTRA']).default('AUTO'),
+    trellisEnabled: z.boolean().default(false),
+    trellisUrl: z
+      .string()
+      .url()
+      .refine((v) => {
+        const u = new URL(v);
+        return (
+          !u.username &&
+          !u.password &&
+          !u.search &&
+          !u.hash &&
+          (['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname) || u.protocol === 'https:')
+        );
+      })
+      .default('http://127.0.0.1:8000'),
+    trellisVariant: z
+      .enum(['base:text', 'large:text', 'large:image', 'large:text+large:image'])
+      .default('base:text'),
     blenderIterations: z.number().int().min(1).max(5).default(3),
     blenderTimeout: z.number().int().min(5000).max(300000).default(90000),
     preview3dFps: z.number().int().min(1).max(60).default(30),

@@ -93,14 +93,23 @@ class AgentLoop {
         this.privateTask && text.length <= 220,
       );
       this.active.profile = this.taskProfile;
-      if (text.length > 220 && this.ai.beginTask && this.config().routerMode !== 'force-model') {
+      const goal = this.taskProfile?.goalSpec;
+      if (
+        goal &&
+        (goal.visualizationRequired ||
+          goal.threeDRequested ||
+          goal.saveRequested ||
+          (goal.researchRequired && goal.comparisonRequired))
+      ) {
         const graph = new (require('./task-graph.cjs').TaskGraph)(this);
         const plan = await graph.plan(text);
-        if (plan.nodes.length >= 3) {
+        if (plan.nodes.length >= 1) {
           clearTimeout(deadline);
           deadline = setTimeout(
             () => this.controller.abort(Error('Task graph timed out')),
-            this.config().agentGraphTimeout || 900000,
+            this.taskProfile?.goalSpec?.threeDRequested
+              ? 2400000
+              : this.config().agentGraphTimeout || 900000,
           );
           await graph.run(plan);
         } else await this.run();

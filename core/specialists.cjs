@@ -37,7 +37,7 @@ class Specialists {
         },
       ],
       reason:
-        'RTX 4060 8 GB / 16 GB RAM / Docker absent. NIM containers were not installed. Interfaces remain available for a compatible deployment.',
+        'Optional local NIM deployment is not configured. Hardware/container compatibility must be checked before installation. Existing hosted and local alternatives remain usable.',
     };
   }
   async ocr(signal) {

@@ -1,5 +1,26 @@
 # NVIDIA routing, local specialists and Blender
 
+## October 5 update — general Blender pipeline
+
+Blender is the primary 3D backend on this PC. A structured design specification describes the requested whole object, recognition features, proportions, primary/secondary forms, mechanical/surface detail, symmetry, materials/colors, lighting, camera, exact lettering and quality target. Useful downloaded reference images are interpreted by an observed working vision route. No production GPU, puck, helmet, furniture or product geometry recipes select the result.
+
+The pipeline checkpoints BLOCKOUT → STRUCTURE → DETAIL → MATERIAL → POLISH, then renders three distinct camera directions and requests strict pixel-based review. Review records recognizability, silhouette, proportions, geometry, detail, materials, lighting, composition, user-intent match and overall scores. Revisions use the concrete defects and existing scene inventory. A completed render/export is not a quality approval. HIGH/ULTRA approval also requires multiple useful references and all category scores at least 7; overall/recognizability/user-intent targets are 8 and 8.5 respectively.
+
+| Quality  | Reference target | Maximum render/review rounds | Square render size | Cycles samples |
+| -------- | ---------------- | ---------------------------- | ------------------ | -------------- |
+| QUICK    | 1                | 1                            | 512                | 16             |
+| STANDARD | 2                | 2                            | 640                | 32             |
+| HIGH     | 3                | 3                            | 768                | 48             |
+| ULTRA    | 4                | 3                            | 960                | 64             |
+
+Settings can reduce correction rounds. These are bounded desktop quality modes, not a promise of photorealism or manufacturing accuracy. Useful-reference count can be lower when sources are blocked; strict approval reflects that limitation. Failed batches do not replace the last valid scene. After one format repair, individually valid, dependency-safe operations can be retained with recorded warnings; strict visual review must still assess missing detail. A saved project can resume from its checkpoint.
+
+The trusted worker supports shaped meshes, revolved profiles, smooth/polyline curves, bevel, weighted normals, mirror, array, Boolean, subdivision, solidify, planar extrusion/inset, procedural lettering, UV projection, bounded geometry-node templates, PBR/procedural materials, hierarchy/collections and world/local alignment. Boolean cutters remain editable and reusable but are excluded from visible exports. GLB contains actual evaluated geometry and embedded baked material textures; exact lettering is geometry, not an image-generator spelling attempt. GPU Cycles selects verified OptiX devices when enough VRAM is free; otherwise CPU rendering remains available. Heavy local operations hold an exclusive application resource lease and pause background work.
+
+TRELLIS stays disabled and optional. This RTX 4060 has 8,188 MiB VRAM and approximately 15.85 GiB system RAM, below the accepted 12 GB VRAM/32 GB RAM requirements. No TRELLIS, Docker, CUDA toolkit or WSL distribution was force-installed. The future provider interface supports readiness, text/image requests, cancellation, variant selection and validated embedded GLB from an explicitly configured local or HTTPS endpoint. Its contract was tested with a fixture endpoint, not a compatible live TRELLIS deployment. NGC credentials have a separate encrypted optional slot and are never sent to inference endpoints.
+
+NVIDIA request counts are diagnostic only: JARVIS no longer enforces the former 300/day or session routing caps for NVIDIA. Real provider errors, cooldowns, capability checks and privacy controls still apply. Gemini retains its separately configurable local safety budget. Background screen monitoring remains local. Current test outcomes and remaining quality defects are documented in [Blender verification](BLENDER_PIPELINE_VERIFICATION.md).
+
 ## October 4 update — 0.6.1
 
 The current small direct probes, adapter fixes and exact acceptance evidence are in [Verification](VERIFICATION.md#october-4--acceptance-repair-061). Lightning, Ultra and Muse succeeded with text/streaming/tools/JSON; Lightning/Ultra also passed reasoning. Kimi succeeded with text and actual structured render vision, but has intermittent empty/timeout responses and no demonstrated native tool success. DeepSeek and GLM were listed/authenticated but their actual inference probes timed out. GLM was now tested on NVIDIA's free trial route; the older free-access uncertainty below is historical. No paid routes were used. Capability profiles record observed modes rather than assuming every listed model supports every operation.
@@ -27,7 +48,7 @@ A validated TaskProfile represents modality, complexity, latency, temporal scope
 
 The owner's configured order is NVIDIA → Gemini → Ollama, with Ollama offline fallback. The older chat-exposed Gemini credential was removed under the compromised-key rule, so Gemini is currently skipped; optionally saving a fresh key enables that preserved adapter again. Missing/invalid credentials, unavailable capabilities, timeouts, cooldowns, circuit breakers and own request caps prevent unsuitable calls. NVIDIA is pinned to the development URL and verified free catalog; OpenAI/Claude and Google paid grounding are blocked in free mode. Research keeps using free background web tools.
 
-Gemini's own budget defaults to **100/day**, is configurable, warns at 80%, stops Gemini calls at 100% and resets at local midnight. NVIDIA has a separate budget with the same default/behavior; the owner was configured to **300/day during setup and acceptance checks**. These are JARVIS safety budgets, not vendor remaining quota. Attempts include classification, probes, retries and model cooperation, so one user command can use several requests. Concurrent NVIDIA reservations use a file lock and fail closed on corrupt/unwritable storage. Previously loaded diagnostic instances predated this locking fix; their historical count is not an audited vendor ledger.
+Gemini's own budget defaults to **100/day**, is configurable, warns at 80%, stops Gemini calls at 100% and resets at local midnight. NVIDIA counts attempts for diagnostics but has no JARVIS daily or session request cap. Classification, probes, retries and model cooperation can use several requests per command. Counts are not an audited vendor quota ledger; real NVIDIA account limits still apply. Invalid or unwritable diagnostic storage does not block NVIDIA inference.
 
 Default cloud screen access is off. The owner had explicitly enabled requested cloud vision; files/clipboard/private memory remain disabled for cloud. Continuous screen sampling/context remains local. No continuous screenshot upload, paid endpoint, paid resource or account/billing signup was performed.
 

@@ -6,6 +6,7 @@ const panel = z
   .object({
     type: z.enum([
       'text',
+      'entity',
       'metrics',
       'line',
       'area',
@@ -23,7 +24,7 @@ const panel = z
     title: z.string().min(1).max(90),
     assetId: z.string().uuid().optional(),
     projectId: z.string().uuid().optional(),
-    body: z.string().max(650).default(''),
+    body: z.string().max(2000).default(''),
     narration: z.string().max(400).default(''),
     sourceIds: z.array(sourceId).min(1).max(4),
     items: z
@@ -31,7 +32,7 @@ const panel = z
         z
           .object({
             label: z.string().max(80),
-            value: z.string().max(100),
+            value: z.string().max(350),
             detail: z.string().max(160).default(''),
           })
           .strict(),
@@ -56,6 +57,16 @@ const briefingSchema = z
         z
           .object({
             key: z.string().min(1).max(100).optional(),
+            relation: z
+              .enum([
+                'CURRENT_ENTITY',
+                'RELATED_ENTITY',
+                'SUPPORTING_VISUAL',
+                'COMPARISON',
+                'SOURCE',
+                'CONTEXT',
+              ])
+              .optional(),
             groupId: z.string().min(1).max(100).optional(),
             groupTitle: z.string().max(90).optional(),
             title: z.string().min(1).max(90),

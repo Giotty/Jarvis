@@ -1,5 +1,15 @@
 # Verification
 
+## October 5 — general planning and primary Blender pipeline (0.7.0)
+
+Installed **0.7.0** adds semantic GoalSpec/task graphs, removes artificial NVIDIA request caps, and makes staged reference-guided Blender the primary 3D backend. **This update is not a full automatic quality acceptance pass.** See [the general seventeen-point report](GENERAL_UPGRADE_REPORT.md) and [actual Blender scores/artifacts/failures](BLENDER_PIPELINE_VERIFICATION.md).
+
+284 JavaScript tests passed; ESLint, TypeScript and production build passed. Real Blender worker checks verified GPU rendering, procedural geometry/materials/text, modifiers, hierarchy, embedded GLB and multi-angle exports. The seven-subject automatic quality tests remain failed or unapproved. The autonomous GPU's retained actual review scored 4.5/10. A separate assisted GPU was built in multiple real Blender passes, scored 7/10 before corrections, and received a corrective pass for rear lighting/ventilation. Its final automated re-review timed out; it remains unapproved rather than receiving invented scores.
+
+The installed archive matches the final package SHA-256 `f06289081b5e0eddec8bfede3c8044839d39249f79e15f77e47e2ec34a3a52e3`; installed metadata and critical source files were checked against version 0.7.0. Packaging verified 98 application files. The final GLB reopened from Library with an actual loaded:true preview acknowledgement. A background-animation issue discovered during this installed check could freeze a new card at opacity zero; background cards now render statically instead of remaining invisible. The earlier missing nine-card GPU Library entry was recovered from its prior acceptance snapshot, with original model assets retained.
+
+NVIDIA/AUTO, Kokoro `bm_daniel`, microphone/privacy preferences and encrypted credentials were preserved. TRELLIS is disabled and was not installed; future adapter contracts were fixture-tested only. Credential scan found no exposed keys. No unrelated GitHub repository was changed. Physical microphone availability remains a manual check.
+
 ## October 4 — main brain and local monitoring routing (0.6.3)
 
 Installed 0.6.3 fixes two independent causes of the misleading Ollama display. Passive screen observations now use separate local counters and cannot overwrite foreground task provider/model status. The connection panel labels the configured MAIN BRAIN, shows local monitoring separately, and identifies an actual local task or fallback rather than hiding it. Concurrent background inference cannot change the model returned with a foreground response.

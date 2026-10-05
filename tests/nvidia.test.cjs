@@ -120,7 +120,7 @@ test('Missing credentials and unverified free models never spend the local reque
     { code: 'free_endpoint_unverified' },
   );
 });
-test('Daily NVIDIA budget persists, caps attempts, and resets on local midnight', (t) => {
+test('NVIDIA diagnostic count persists beyond a legacy cap and resets on local midnight', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-nvidia-budget-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   let now = new Date(2026, 9, 3, 23, 59);
@@ -128,8 +128,9 @@ test('Daily NVIDIA budget persists, caps attempts, and resets on local midnight'
   const b = new HostedBudget(options);
   b.take();
   b.take();
-  assert.throws(() => b.take(), { code: 'daily_budget' });
-  assert.equal(new HostedBudget(options).snapshot().used, 2);
+  b.take();
+  assert.equal(b.snapshot().limited,false);
+  assert.equal(new HostedBudget(options).snapshot().used, 3);
   now = new Date(2026, 9, 4);
   assert.equal(b.snapshot().used, 0);
 });
@@ -324,5 +325,7 @@ test('Two provider instances share an atomic daily budget without losing reserva
   a.take();
   b.take();
   assert.equal(a.snapshot().used, 2);
-  assert.throws(() => a.take(), { code: 'daily_budget' });
+  a.take();
+  assert.equal(b.snapshot().used,3);
+  assert.equal(b.snapshot().limited,false);
 });

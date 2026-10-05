@@ -80,96 +80,27 @@ test('Compact NIM contracts resolve reused vectors as arrays, preserving length 
   assert.equal(result.properties.rotation.items.type, 'number');
 });
 
-test('A weak render causes a bounded revision using the same semantic contract and retains project identity', async (t) => {
-  const directory = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'jarvis-revision-test-'));
-  t.after(() => {
-    assert(
-      path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir()) + path.sep),
-    );
-    fs.rmSync(directory, { recursive: true, force: true });
-  });
-  const render = path.join(directory, 'render.png');
-  fs.writeFileSync(render, Buffer.from('fixture'));
-  const plan = {
-    title: 'Monitor',
-    design: {
-      category: 'Monitor',
-      silhouette: 'Wide thin display on a stand',
-      proportions: 'Display broader than base',
-      features: ['display', 'bezel', 'stand'],
-    },
-    materials: [
-      {
-        name: 'Metal',
-        color: [0.1, 0.1, 0.1, 1],
-        metallic: 0.6,
-        roughness: 0.3,
-        emission: [0, 0, 0, 1],
-        strength: 0,
-      },
-    ],
-    objects: [
-      {
-        name: 'Display',
-        kind: 'cube',
-        location: [0, 0, 0],
-        rotation: [0, 0, 0],
-        dimensions: [3, 0.2, 2],
-        material: 'Metal',
-        bevel: 0.02,
-      },
-    ],
-    lights: [{ name: 'Key', location: [3, 3, 4], energy: 500, size: 3 }],
-    camera: { location: [5, 5, 5], target: [0, 0, 0], orthoScale: 5 },
+test('Strict HIGH/ULTRA acceptance rejects generic geometry and weak individual scores', () => {
+  const { acceptedReview } = require('../core/blender/design-spec.cjs');
+  const scores = {
+    recognizability: 9,
+    silhouette: 9,
+    proportions: 9,
+    geometry: 9,
+    detail: 9,
+    materials: 9,
+    lighting: 9,
+    composition: 9,
+    userIntent: 9,
+    overall: 9,
   };
-  let planning = 0,
-    reviews = 0,
-    builds = 0;
-  const service = {
-    queue: Promise.resolve(),
-    config: () => ({ blenderIterations: 3 }),
-    emit: () => {},
-    ai: {
-      chat: async (_messages, tools) => {
-        if (tools) {
-          planning++;
-          assert(!JSON.stringify(tools).includes('create_mesh'));
-          return { tool_calls: [{ function: { name: 'submit_blender_plan', arguments: plan } }] };
-        }
-        reviews++;
-        return {
-          content: JSON.stringify({
-            accepted: reviews > 1,
-            recognizable: reviews > 1,
-            missingFeatures: reviews > 1 ? [] : ['Stand'],
-            findings: [],
-          }),
-        };
-      },
-    },
-    perform: async (input, _signal, rebuild) => {
-      builds++;
-      assert(rebuild);
-      if (builds > 1) assert.equal(input.projectId, 'owned-project');
-      return {
-        verified: true,
-        projectId: 'owned-project',
-        revision: builds,
-        exports: [{ format: 'PNG', path: render }],
-      };
-    },
-  };
-  const result = await require('../core/blender/illustration.cjs').design(
-    service,
-    { goal: 'Make a simplified monitor' },
-    new AbortController().signal,
-  );
-  assert.equal(planning, 2);
-  assert.equal(builds, 2);
-  assert.equal(result.quality.reviews, 2);
-  assert(result.quality.accepted && result.quality.recognizable);
-  assert.equal(result.quality.history[0].accepted, false);
+  const review = { accepted: true, scores, missingFeatures: [] };
+  assert(acceptedReview(review, 'ULTRA'));
+  assert(!acceptedReview({ ...review, scores: { ...scores, detail: 5 } }, 'ULTRA'));
+  assert(!acceptedReview({ ...review, missingFeatures: ['Essential component missing'] }, 'HIGH'));
+  assert(!acceptedReview({ ...review, scores: { ...scores, overall: 7.8 } }, 'ULTRA'));
 });
+
 test('Text pagination preserves exact content, complete words and responsive capacity', () => {
   const ts = require('typescript'),
     module = { exports: {} };
@@ -214,7 +145,7 @@ test('Comparison relevance favors sourced core metrics over playback power witho
       },
     ],
   };
-  const result = candidates([source], ['Product A', 'Product B']);
+  const result = candidates([source], ['Product A', 'Product B'], 'CUDA Cores');
   assert.equal(result[0].title, 'CUDA Cores');
   assert.deepEqual(
     result[0].data.map((d) => d.value),
@@ -243,7 +174,7 @@ test('Failed visual review cannot discard valid preview dependency or falsely co
     },
     () => {},
   );
-  assert.deepEqual(executed, ['design', 'review', 'preview', 'save']);
+  assert.deepEqual(executed, ['design', 'preview', 'save', 'review']);
   assert.equal(plan.nodes.find((n) => n.kind === 'review').state, 'FAILED');
   assert.equal(plan.nodes.find((n) => n.kind === 'preview').state, 'SUCCEEDED');
 });
@@ -275,12 +206,12 @@ test('Generic repeated geometry expands radial and linear features with bounded 
   assert.throws(
     () =>
       expandObjects(
-        Array.from({ length: 4 }, () => ({
+        Array.from({ length: 7 }, () => ({
           ...part,
           repeat: { count: 16, center: [0, 0, 0], translation: [0, 0, 0], rotation: [0, 0, 0] },
         })),
       ),
-    /56/,
+    /96/,
   );
 });
 

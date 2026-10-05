@@ -6,8 +6,6 @@ const {
   diverse,
   terms,
   coveringLinks,
-  authority,
-  productIdentifiers,
 } = require('./research-search.cjs');
 const dns = require('node:dns/promises');
 const http = require('node:http');
@@ -96,9 +94,13 @@ async function webGet(
     const chunks = [];
     for await (const chunk of response.body) {
       bytes += chunk.length;
-      if (bytes > 2000000) {
+      if (bytes > (binary ? 8000000 : 2000000)) {
         response.body.destroy();
-        throw Error('Page exceeds the text extraction limit.');
+        throw Error(
+          binary
+            ? 'Image exceeds the bounded download limit.'
+            : 'Page exceeds the text extraction limit.',
+        );
       }
       chunks.push(chunk);
     }
@@ -261,12 +263,7 @@ function extract(html, url, query = '') {
         /\/wiki\/(?:Talk|Template_talk|File|Special|Help):/.test(target)
       )
         return;
-      const score =
-        relevance({ title: label, url: target }, query) +
-        (productIdentifiers(query).length &&
-        /\b(?:conclusion|verdict|summary|pros|cons)\b/i.test(label)
-          ? 1
-          : 0);
+      const score = relevance({ title: label, url: target }, query);
       if (score > 0)
         links.push({
           id: require('node:crypto').randomUUID(),
@@ -290,7 +287,7 @@ function extract(html, url, query = '') {
   const text = excerpt(
     body + (structured ? '\nPublic structured page data:\n' + structured : ''),
     query,
-    query ? (productIdentifiers(query).length ? 9000 : 4500) : 12000,
+    query ? 9000 : 12000,
   );
   return {
     url,
@@ -395,7 +392,7 @@ class ResearchAgent {
               ...page,
               text: page.videos?.length
                 ? 'Public channel uploads, publication dates and available view counts are listed in videos below. Shorts are identified separately. Counts are snapshots, not guaranteed live.'
-                : page.text.slice(0, productIdentifiers(query).length ? 9000 : 4500),
+                : page.text.slice(0, 9000),
               ...(page.videos ? { videos: page.videos.slice(0, 8) } : {}),
               readable: Boolean(
                 page.text && (page.text.length >= 200 || page.video || page.videos?.length),
@@ -418,7 +415,7 @@ class ResearchAgent {
     const links = coveringLinks(
       fetched
         .flatMap((s) => s.links || [])
-        .filter((l) => !seen.has(l.url) && (!productIdentifiers(query).length || authority(l) > 0))
+        .filter((l) => !seen.has(l.url))
         .sort((a, b) => b.relevance - a.relevance),
       query,
       4,
@@ -426,9 +423,7 @@ class ResearchAgent {
     const deeper = deadline.aborted ? [] : await read(links);
     const sources = diverse(
       [
-        ...[...deeper, ...fetched]
-          .filter((s) => s.readable)
-          .sort((a, b) => authority(b) - authority(a)),
+        ...[...deeper, ...fetched].filter((s) => s.readable),
         ...[...deeper, ...fetched].filter((s) => !s.readable),
       ],
       6,

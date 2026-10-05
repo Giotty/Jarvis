@@ -1,7 +1,7 @@
 const fs = require('node:fs'),
   path = require('node:path'),
   crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const { z } = require('zod');
 const { zodToJsonSchema } = require('zod-to-json-schema');
 const { operations, batch } = require('./schema.cjs');
@@ -65,14 +65,31 @@ function validateGlb(buffer) {
     throw Error('Preview geometry budget exceeded.');
   return data;
 }
+function modelDescription(project) {
+  return [
+    'Modeled with Blender',
+    project.generationSettings?.quality && 'Quality: ' + project.generationSettings.quality,
+    'Revision: ' + project.revision,
+    project.quality?.scores && 'Overall: ' + project.quality.scores.overall + '/10',
+    project.quality &&
+      (project.quality.accepted ? 'Visual review approved' : 'Visual quality unapproved'),
+    project.scene.objects.length +
+      ' objects · ' +
+      project.scene.totalVertices +
+      ' evaluated vertices',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
 class BlenderService {
-  constructor({ directory, config, emit = () => {}, workspace, ai }) {
-    Object.assign(this, { config, emit, workspace, ai });
+  constructor({ directory, config, emit = () => {}, workspace, ai, research, resources, secrets }) {
+    Object.assign(this, { config, emit, workspace, ai, research, resources, secrets });
     this.root = path.resolve(directory);
     fs.mkdirSync(this.root, { recursive: true });
     normal(this.root, this.root);
     this.queue = Promise.resolve();
     this.generators = new (require('./generators.cjs').Generative3DProviders)();
+    this.generators.register(new (require('./trellis.cjs').TrellisProvider)({ config, secrets }));
     this.current = null;
     try {
       this.current = uuid.parse(
@@ -89,7 +106,7 @@ class BlenderService {
       path: detect(this.config()),
       current: this.current,
       backend: 'Blender',
-      generator: 'structured-mesh-operations',
+      generator: 'staged-reference-guided-Blender',
       optionalGenerators: this.generators.status(),
     };
   }
@@ -121,6 +138,11 @@ class BlenderService {
         mock: true,
         message: '3D operations simulated; no project was created.',
       };
+    for (const op of args.operations)
+      if (op.op === 'import_glb') {
+        op.path = normal(this.root, path.resolve(op.path));
+        validateGlb(fs.readFileSync(op.path));
+      }
     const executable = detect(this.config());
     if (!executable)
       throw Error('Blender unavailable. Install the official build or select it in 3D settings.');
@@ -132,7 +154,36 @@ class BlenderService {
       revisionName = 'revision-' + revision + '-' + crypto.randomUUID(),
       output = this.file(id, revisionName);
     fs.mkdirSync(output);
+    let renderDevice = 'CPU';
+    if (args.operations.some((o) => ['render', 'render_views'].includes(o.op))) {
+      try {
+        const free = Number(
+          execFileSync('nvidia-smi', ['--query-gpu=memory.free', '--format=csv,noheader,nounits'], {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: 2000,
+          })
+            .trim()
+            .split('\n')[0],
+        );
+        if (free >= 2500) renderDevice = 'GPU';
+      } catch {
+        /* Keep CPU rendering on unsupported or memory-constrained hardware. */
+      }
+    }
     const job = {
+      renderDevice,
+      materialInventory: (previous?.scene?.materials || [])
+        .flatMap((m) => {
+          const parsed = operations.create_material.safeParse({
+            name: m.name,
+            color: m.color,
+            metallic: m.metallic,
+            roughness: m.roughness,
+          });
+          return parsed.success ? [parsed.data] : [];
+        })
+        .slice(0, 128),
       units: previous?.units || args.units,
       operations: args.operations,
       output,
@@ -141,62 +192,70 @@ class BlenderService {
     const jobPath = this.file(id, revisionName + '.json');
     fs.writeFileSync(jobPath, JSON.stringify(job));
     this.emit('blender-progress', { projectId: id, stage: 'modeling', revision });
-    const deadline = AbortSignal.timeout(this.config().blenderTimeout || 90000),
+    const viewCount = args.operations.find((o) => o.op === 'render_views')?.views.length || 1;
+    const deadline = AbortSignal.timeout(
+        Math.min(300000, (this.config().blenderTimeout || 90000) * viewCount),
+      ),
       combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-    await new Promise((resolve, reject) => {
-      let stderr = '',
-        settled = false;
-      const child = spawn(
-        executable,
-        [
-          '--background',
-          '--factory-startup',
-          '--disable-autoexec',
-          '--threads',
-          '2',
-          '--python-exit-code',
-          '1',
-          '--python',
-          path
-            .join(__dirname, 'worker.py')
-            .replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep),
-          '--',
-          jobPath,
-        ],
-        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
-      );
-      const stop = () => {
-        child.kill();
-      };
-      combined.addEventListener('abort', stop, { once: true });
-      child.stderr.on('data', (chunk) => {
-        stderr = (stderr + chunk.toString()).slice(-3000);
+    const release = this.resources ? await this.resources.acquire('Blender', combined) : () => {};
+    try {
+      await new Promise((resolve, reject) => {
+        let stderr = '',
+          settled = false;
+        const child = spawn(
+          executable,
+          [
+            '--background',
+            '--factory-startup',
+            '--disable-autoexec',
+            '--threads',
+            '2',
+            '--python-exit-code',
+            '1',
+            '--python',
+            path
+              .join(__dirname, 'worker.py')
+              .replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep),
+            '--',
+            jobPath,
+          ],
+          { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+        );
+        const stop = () => {
+          child.kill();
+        };
+        combined.addEventListener('abort', stop, { once: true });
+        child.stderr.on('data', (chunk) => {
+          stderr = (stderr + chunk.toString()).slice(-3000);
+        });
+        child.stdout.on('data', (chunk) => {
+          stderr = (stderr + chunk.toString()).slice(-3000);
+        });
+        child.once('error', () => {
+          settled = true;
+          combined.removeEventListener('abort', stop);
+          reject(Error('Blender could not start.'));
+        });
+        child.once('close', (code) => {
+          combined.removeEventListener('abort', stop);
+          if (settled) return;
+          try {
+            combined.throwIfAborted();
+            if (code !== 0)
+              throw Error(
+                'Blender operation failed: ' +
+                  stderr.replace(/nvapi-[\w-]+/g, '[redacted]').slice(-1500),
+              );
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
+        if (combined.aborted) stop();
       });
-      child.stdout.on('data', (chunk) => {
-        stderr = (stderr + chunk.toString()).slice(-3000);
-      });
-      child.once('error', () => {
-        settled = true;
-        combined.removeEventListener('abort', stop);
-        reject(Error('Blender could not start.'));
-      });
-      child.once('close', (code) => {
-        combined.removeEventListener('abort', stop);
-        if (settled) return;
-        try {
-          combined.throwIfAborted();
-          if (code !== 0)
-            throw Error(
-              'Blender operation failed: ' +
-                stderr.replace(/nvapi-[\w-]+/g, '[redacted]').slice(-1500),
-            );
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      });
-      if (combined.aborted) stop();
-    });
+    } finally {
+      release();
+    }
     combined.throwIfAborted();
     const scene = JSON.parse(
       fs.readFileSync(normal(this.root, path.join(output, 'result.json')), 'utf8'),
@@ -208,9 +267,10 @@ class BlenderService {
       const file = normal(this.root, path.join(output, e.name));
       if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw Error('Missing export');
       if (e.format === 'GLB') validateGlb(fs.readFileSync(file));
-      return { ...e, assetId: crypto.randomUUID(), file };
+      return { ...e, assetId: crypto.randomUUID(), file, revision };
     });
     const manifest = {
+      ...previous,
       id,
       title: previous?.title || args.title,
       units: job.units,
@@ -260,6 +320,7 @@ class BlenderService {
     if (existing && !this.workspace.locks.has(existing.id)) {
       const panel = existing.panels.find((p) => p.projectId === project.id);
       panel.assetId = asset.assetId;
+      panel.body = modelDescription(project);
       existing.title = project.title + ' · revision ' + project.revision;
       this.workspace.publish();
       return;
@@ -282,11 +343,7 @@ class BlenderService {
                 assetId: asset.assetId,
                 projectId: project.id,
                 sourceIds: [sourceId],
-                body:
-                  project.scene.objects.length +
-                  ' scene objects · ' +
-                  project.scene.totalVertices +
-                  ' evaluated vertices',
+                body: modelDescription(project),
                 items: [],
                 data: [],
                 imageIds: [],
@@ -364,299 +421,9 @@ class BlenderService {
         success: true,
         verified: false,
         mock: true,
-        message: '3D design simulated; no AI request or scene mutation was made.',
+        message: '3D design simulated; no project created.',
       };
-    if (!args.projectId) return require('./illustration.cjs').design(this, args, signal);
-    const previous = args.projectId ? this.manifest(args.projectId) : null;
-    const { scenePlan, toBatch } = require('./scene-plan.cjs');
-    const contract = zodToJsonSchema(previous ? batch : scenePlan);
-    const validatedPlan = (reply) => {
-      const value = planInput(reply);
-      return value.operations ? batch.parse(value) : toBatch(value);
-    };
-    const planInput = (reply) =>
-      reply.tool_calls?.find((c) => c.function.name === 'submit_blender_plan')?.function
-        .arguments ?? JSON.parse(reply.content.replace(/^```(?:json)?\s*|\s*```$/g, ''));
-    const planningTools = [
-      {
-        type: 'function',
-        function: {
-          name: 'submit_blender_plan',
-          description: 'Return a flat validated operation batch; does not execute it.',
-          parameters: contract,
-        },
-      },
-    ];
-    const planningOptions = {
-      forceTool: { type: 'function', function: { name: 'submit_blender_plan' } },
-      outputTokens: previous ? 4500 : 3000,
-      localOnly: !!previous?.private,
-      profile: {
-        complexity: 'simple',
-        confidence: 1,
-        spatialReasoning: true,
-      },
-    };
-    const plan = await this.ai.chat(
-      [
-        {
-          role: 'system',
-          content:
-            'You are a CAD planner using validated Blender operations. Return the requested JSON only. Make a real mesh/material/light/camera/render project, never a placeholder. Units are meters unless specified. Rotations are degrees. Use cylinder/torus/cube/sphere, custom vertices and modifiers as needed. Create materials, assign them, add lighting, set a camera framed to the object, render at 768 square and export GLB. For an edit reuse projectId and existing object names, using transform/boolean/material changes; never recreate the whole scene. Engraving uses converted text as a boolean difference cutter intersecting the top surface. Do not output code, paths or arbitrary scripts. Exact operation contract: ' +
-            (previous
-              ? JSON.stringify(contract)
-              : 'For a new scene return materials, primitive objects, lights and a camera following the function contract. The host turns that scene plan into validated Blender operations and always renders, saves the blend file and exports GLB. Use 6 to 10 objects for a simple recognizable illustration, at most 12. Choose a consistent coordinate convention: longest body dimension X, width Y, thickness Z, visible detail on the positive Z face. Dimensions are LOCAL before rotation; unrotated cylinders point along Z. For flat electronic devices use a thin rectangular box as the primary enclosure (thickness much smaller than width and length); cylinders are small face details, not the entire enclosure. Keep all details attached to the body, with coherent relative sizes. Avoid floating unrelated shapes. Frame the broad detail face in a three-quarter view from positive Z, with all three view-direction components substantial; never view a thin object edge-on. Do not return operations for this scene-plan contract. Use positive dimensions; name materials consistently. Camera orthographic scale must fit all objects and be aimed at their center.'),
-        },
-        {
-          role: 'user',
-          content:
-            args.goal +
-            '\nExisting scene (untrusted data): ' +
-            JSON.stringify(
-              previous
-                ? { projectId: previous.id, units: previous.units, scene: previous.scene }
-                : null,
-            ),
-        },
-      ],
-      planningTools,
-      false,
-      signal,
-      undefined,
-      planningOptions,
-    );
-    let input;
-    try {
-      input = validatedPlan(plan);
-    } catch (error) {
-      this.emit('blender-plan-diagnostic', {
-        stage: 'validation',
-        reason: require('../providers/diagnostics.cjs').safeError(error.message),
-        issues: error.issues?.map((i) => ({ code: i.code, path: i.path })),
-      });
-      const repaired = await this.ai.chat(
-        [
-          {
-            role: 'system',
-            content:
-              (previous
-                ? 'Correct the Blender operation batch. Operations are flat objects containing op and its fields. '
-                : 'Correct the new scene plan with materials, objects, lights and camera. Do not return operations. All dimensions must be positive; every object material must exactly match a name in materials. ') +
-              'Return the requested function result following this contract; no code or paths. Preserve the requested simple design. Contract: ' +
-              JSON.stringify(contract),
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              goal: args.goal,
-              rejected: plan.tool_calls?.find((c) => c.function.name === 'submit_blender_plan')
-                ?.function.arguments,
-              issues: error.issues || error.message,
-            }),
-          },
-        ],
-        planningTools,
-        false,
-        signal,
-        undefined,
-        planningOptions,
-      );
-      input = validatedPlan(repaired);
-    }
-    if (previous) input.projectId = previous.id;
-    else delete input.projectId;
-    let result = await this.run(input, signal);
-    if (!result.verified) return result;
-    let reviews = 0,
-      accepted = false,
-      findings = ['Visual review not available.'];
-    const reviewSchema = z
-      .object({
-        accepted: z.boolean(),
-        findings: z.array(z.string().max(300)).max(5),
-      })
-      .strict();
-    for (let i = 0; i < (this.config().blenderIterations || 3); i++) {
-      signal?.throwIfAborted();
-      const render = result.exports.find((e) => e.format === 'PNG');
-      if (!render) break;
-      this.emit('blender-progress', {
-        projectId: result.projectId,
-        stage: 'visual-review',
-        iteration: i + 1,
-      });
-      try {
-        const reviewed = await this.ai.chat(
-          [
-            {
-              role: 'system',
-              content:
-                'Review this real Blender render against the goal. Return JSON accepted and concise findings. Judge visible pixels, not object names alone. Reject an edge-on view that hides the defining details, disconnected floating pieces, or a silhouette that is not recognizable as the requested subject. Check visual materials, framing, geometry warnings and requested text. Accept if the requested simple design is visibly present. Do not require extra features beyond the goal, and do not claim manufacturing readiness.',
-            },
-            {
-              role: 'user',
-              content:
-                args.goal +
-                '\nObserved objects: ' +
-                JSON.stringify(
-                  result.scene.objects.map((o) => ({
-                    name: o.name,
-                    dimensions: o.dimensions,
-                    manifold: o.manifold,
-                    materials: o.materials,
-                  })),
-                ),
-              images: ['data:image/png;base64,' + fs.readFileSync(render.path).toString('base64')],
-            },
-          ],
-          undefined,
-          true,
-          signal,
-          undefined,
-          {
-            schema: zodToJsonSchema(reviewSchema),
-            outputTokens: 1536,
-            manualVision: true,
-            localOnly: !!previous?.private,
-            profile: { modality: 'image', complexity: 'normal', confidence: 1 },
-          },
-        );
-        const review = reviewSchema.parse(
-          JSON.parse(reviewed.content.replace(/^```(?:json)?\s*|\s*```$/g, '').trim()),
-        );
-        reviews++;
-        accepted = review.accepted;
-        findings = review.findings;
-        if (accepted || i + 1 >= (this.config().blenderIterations || 3)) break;
-        let correction = await this.ai.chat(
-          [
-            {
-              role: 'system',
-              content:
-                'Return a JSON Blender operation batch correcting the supplied visual findings. Reuse existing names and projectId, never recreate the scene. End with render and GLB export. At most twelve operations. Contract: ' +
-                JSON.stringify(zodToJsonSchema(batch)),
-            },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                goal: args.goal,
-                findings: review.findings,
-                projectId: result.projectId,
-                scene: result.scene,
-              }),
-            },
-          ],
-          [
-            {
-              type: 'function',
-              function: {
-                name: 'submit_blender_plan',
-                description: 'Return validated corrections for the existing Blender scene.',
-                parameters: zodToJsonSchema(batch),
-              },
-            },
-          ],
-          false,
-          signal,
-          undefined,
-          {
-            forceTool: { type: 'function', function: { name: 'submit_blender_plan' } },
-            outputTokens: 4500,
-            localOnly: !!previous?.private,
-            profile: { complexity: 'simple', confidence: 1, spatialReasoning: true },
-          },
-        );
-        const validateCorrection = (reply) => {
-          const changes = batch.parse(planInput(reply));
-          if (changes.operations.length > 12)
-            throw Error('Correction exceeds the iteration operation limit');
-          const existing = new Set(result.scene.objects.map((o) => o.name));
-          for (const op of changes.operations) {
-            if (
-              ['create_primitive', 'create_mesh', 'add_text', 'add_light'].includes(op.op) &&
-              existing.has(op.name)
-            )
-              throw Error(
-                'Object already exists: ' +
-                  op.name +
-                  '. Use transform/material/modifier operations to edit it, or a unique name for an additional mesh.',
-              );
-          }
-          return changes;
-        };
-        let changes;
-        try {
-          changes = validateCorrection(correction);
-        } catch (error) {
-          signal?.throwIfAborted();
-          correction = await this.ai.chat(
-            [
-              {
-                role: 'system',
-                content:
-                  'Repair this Blender correction batch. Do not recreate existing named objects. Use transform/material/modifier operations for them; added geometry must have unique names. Preserve the actual project, correct the visual findings, and end with render and GLB export. At most twelve operations. Return the function arguments only.',
-              },
-              {
-                role: 'user',
-                content: JSON.stringify({
-                  goal: args.goal,
-                  findings: review.findings,
-                  scene: result.scene,
-                  invalidPlan: planInput(correction),
-                  validationError: error.message,
-                }),
-              },
-            ],
-            [
-              {
-                type: 'function',
-                function: {
-                  name: 'submit_blender_plan',
-                  description: 'Correct an existing scene without duplicate names.',
-                  parameters: zodToJsonSchema(batch),
-                },
-              },
-            ],
-            false,
-            signal,
-            undefined,
-            {
-              forceTool: { type: 'function', function: { name: 'submit_blender_plan' } },
-              outputTokens: 4500,
-              localOnly: !!previous?.private,
-              profile: { complexity: 'simple', confidence: 1, spatialReasoning: true },
-            },
-          );
-          changes = validateCorrection(correction);
-        }
-        result = await this.run(
-          { projectId: result.projectId, operations: changes.operations },
-          signal,
-        );
-      } catch (error) {
-        signal?.throwIfAborted();
-        this.emit('blender-plan-diagnostic', {
-          stage: reviews ? 'correction' : 'visual-review',
-          code: error.code || error.name,
-          reason: require('../providers/diagnostics.cjs').safeError(error.message),
-          issues: error.issues?.map((issue) => ({ code: issue.code, path: issue.path })),
-        });
-        findings = reviews
-          ? [
-              ...findings,
-              'Automatic correction could not be completed; the last verified revision remains available.',
-            ]
-          : ['The project and exports were created, but visual AI review was unavailable.'];
-        break;
-      }
-    }
-    return {
-      ...result,
-      quality: { reviewed: reviews > 0, accepted, findings, reviews },
-      message: accepted
-        ? 'Created and visually reviewed the real Blender project.'
-        : 'Created the real Blender project; review the preview and geometry warnings before manufacturing.',
-    };
+    return require('./staged.cjs').design(this, args, signal);
   }
   plugin() {
     const tools = Object.entries(operations).map(([op, s]) => ({
@@ -688,6 +455,12 @@ class BlenderService {
           goal: { type: 'string', minLength: 1, maxLength: 2000 },
           projectId: { type: 'string', format: 'uuid' },
           artifactSession: { type: 'string', format: 'uuid' },
+          quality: { type: 'string', enum: ['QUICK', 'STANDARD', 'HIGH', 'ULTRA'] },
+          resume: {
+            type: 'boolean',
+            description:
+              'Continue the last committed stages of an interrupted project, preserving its design and verified reference analysis.',
+          },
         },
         required: ['goal'],
         additionalProperties: false,
